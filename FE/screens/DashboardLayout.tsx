@@ -35,7 +35,10 @@ const DashboardLayout = () => {
         <Sidebar />
         <View style={styles.mainContent}>
           <ScrollView contentContainerStyle={styles.scrollContent}>
-            <Stack.Navigator id="DashboardStack" screenOptions={{ headerShown: false }}>
+            <Stack.Navigator
+              id="DashboardStack"
+              screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#fff' } }}
+            >
               <Stack.Screen name="Calendar" component={CalendarView} />
               <Stack.Screen name="Employees" component={EmployeeManagement} />
               <Stack.Screen name="Leave" component={LeaveManagement} />
@@ -51,7 +54,7 @@ const DashboardLayout = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#fafafa',
+    backgroundColor: '#fff',
   },
   container: {
     flex: 1,
@@ -59,11 +62,12 @@ const styles = StyleSheet.create({
   },
   mainContent: {
     flex: 1,
-    backgroundColor: '#fafafa',
+    backgroundColor: '#fff',
   },
   scrollContent: {
     padding: 20,
     flexGrow: 1,
+    backgroundColor: '#fff',
   }
 });
 

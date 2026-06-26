@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import SearchableDropdown from './SearchableDropdown';
+import Pagination from './Pagination';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -20,6 +21,9 @@ const StatisticsView = () => {
   const [selectedEmployee, setSelectedEmployee] = useState<string | null>(null);
 
   const [currentDate, setCurrentDate] = useState(new Date());
+  
+  const ITEMS_PER_PAGE = 12;
+  const [currentPage, setCurrentPage] = useState(1);
 
   const fetchData = async () => {
     setLoading(true);
@@ -63,6 +67,7 @@ const StatisticsView = () => {
   const changeMonth = (delta: number) => {
     const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + delta, 1);
     setCurrentDate(newDate);
+    setCurrentPage(1);
   };
 
   const isEmployeeInDept = (enNo: string) => {
@@ -180,6 +185,7 @@ const StatisticsView = () => {
             onChange={(val) => {
               setSelectedDepartment(val);
               setSelectedEmployee(null);
+              setCurrentPage(1);
             }}
             placeholder="Tất cả bộ phận"
             searchPlaceholder="Tìm kiếm bộ phận..."
@@ -194,7 +200,10 @@ const StatisticsView = () => {
           <SearchableDropdown
             data={employees.filter(e => isEmployeeInDept(e.enNo))}
             value={selectedEmployee}
-            onChange={setSelectedEmployee}
+            onChange={(val) => {
+              setSelectedEmployee(val);
+              setCurrentPage(1);
+            }}
             placeholder="Tất cả nhân viên"
             searchPlaceholder="Tìm kiếm nhân viên..."
             keyExtractor={(item) => item.enNo}
@@ -234,7 +243,7 @@ const StatisticsView = () => {
           <Text style={[styles.cell, {flex: 1, fontWeight: 'bold', textAlign: 'center'}]}>Có phép</Text>
         </View>
         
-        {stats.employeeStats.map(emp => (
+        {stats.employeeStats.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE).map(emp => (
           <View key={emp.enNo} style={styles.tableRow}>
             <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>{emp.name}</Text>
             <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.late > 0 ? '#f28baf' : '#888'}]}>{emp.late}</Text>
@@ -247,6 +256,12 @@ const StatisticsView = () => {
         {stats.employeeStats.length === 0 && (
           <Text style={{padding: 20, textAlign: 'center', color: '#888'}}>Không có dữ liệu hiển thị.</Text>
         )}
+
+        <Pagination 
+          currentPage={currentPage} 
+          totalPages={Math.ceil(stats.employeeStats.length / ITEMS_PER_PAGE)} 
+          onPageChange={setCurrentPage} 
+        />
       </View>
     </ScrollView>
   );

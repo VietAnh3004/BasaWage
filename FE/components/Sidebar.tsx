@@ -23,7 +23,7 @@ const Sidebar = () => {
   
   const activeTab = activeRouteName.toLowerCase();
 
-  const roleName = company.role === 'owner' ? 'Sếp tổng' : company.role === 'manager' ? 'Sếp' : 'Nhân viên';
+  const roleName = company.role === 'owner' ? 'Sếp tổng' : company.role === 'manager' ? 'Quản lý' : 'Nhân viên';
 
   return (
     <View style={styles.sidebar}>

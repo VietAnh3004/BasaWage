@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import SearchableDropdown from './SearchableDropdown';
+import Pagination from './Pagination';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -17,6 +18,13 @@ const EmployeeManagement = () => {
   const [personnel, setPersonnel] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const ITEMS_PER_PAGE = 12;
+  const [currentPage, setCurrentPage] = useState(1);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [viewMode, searchQuery]);
 
   // Personnel Form
   const [showPersonnelModal, setShowPersonnelModal] = useState(false);
@@ -69,7 +77,8 @@ const EmployeeManagement = () => {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ company_id: company.company_id, user_id: memberId })
       });
-      fetchData();
+      // Optimistic update: flip status to 'active' without full reload
+      setMembers(prev => prev.map(m => m.user_id === memberId ? { ...m, status: 'active' } : m));
     } catch (err) { console.error(err); }
   };
 
@@ -81,7 +90,8 @@ const EmployeeManagement = () => {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ company_id: company.company_id, user_id: memberId, role: newRole })
       });
-      fetchData();
+      // Optimistic update: flip role without full reload
+      setMembers(prev => prev.map(m => m.user_id === memberId ? { ...m, role: newRole } : m));
     } catch (err) { console.error(err); }
   };
 
@@ -146,13 +156,18 @@ const EmployeeManagement = () => {
 
   const handleToggleStatus = async (id: string, currentStatus: string) => {
     const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+    // Optimistic update: flip status immediately
+    setPersonnel(prev => prev.map(p => p.id === id ? { ...p, status: newStatus } : p));
     try {
       await fetch(`${API_URL}/api/boss/personnel/${id}/status`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
       });
-      fetchData();
-    } catch (e) { console.error(e); }
+    } catch (e) {
+      // Revert on error
+      setPersonnel(prev => prev.map(p => p.id === id ? { ...p, status: currentStatus } : p));
+      console.error(e);
+    }
   };
 
   const handleDisconnect = async (personnel_id: string, user_id: string | null) => {
@@ -161,7 +176,8 @@ const EmployeeManagement = () => {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ company_id: company.company_id, personnel_id, user_id })
       });
-      fetchData();
+      // Optimistic update: clear user/enno links
+      setPersonnel(prev => prev.map(p => p.id === personnel_id ? { ...p, user_id: null, user_username: null, enno: null } : p));
     } catch (e) { console.error(e); }
   };
 
@@ -177,36 +193,49 @@ const EmployeeManagement = () => {
         <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Trạng thái</Text>
         <Text style={[styles.cell, {flex: 1, textAlign: 'center', fontWeight: 'bold'}]}>Hành động</Text>
       </View>
-      {personnel.filter(p => !searchQuery || p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.department_name?.toLowerCase().includes(searchQuery.toLowerCase())).map(p => (
-        <View key={p.id} style={styles.tableRow}>
-          <Text style={[styles.cell, {flex: 2}]}>{p.name}</Text>
-          <Text style={[styles.cell, {flex: 2}]}>{p.department_name || '-'}</Text>
-          <View style={{flex: 2, flexDirection: 'row', alignItems: 'center'}}>
-            <Switch
-              value={p.status === 'active' || p.status === undefined}
-              onValueChange={() => handleToggleStatus(p.id, p.status || 'active')}
-              trackColor={{ false: '#f28baf', true: '#4caf50' }}
-              thumbColor={'#fff'}
-              disabled={!canManage}
+      {(() => {
+        const filtered = personnel.filter(p => !searchQuery || p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.department_name?.toLowerCase().includes(searchQuery.toLowerCase()));
+        const paginated = filtered.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+        return (
+          <>
+            {paginated.map(p => (
+              <View key={p.id} style={styles.tableRow}>
+                <Text style={[styles.cell, {flex: 2}]}>{p.name}</Text>
+                <Text style={[styles.cell, {flex: 2}]}>{p.department_name || '-'}</Text>
+                <View style={{flex: 2, flexDirection: 'row', alignItems: 'center'}}>
+                  <Switch
+                    value={p.status === 'active' || p.status === undefined}
+                    onValueChange={() => handleToggleStatus(p.id, p.status || 'active')}
+                    trackColor={{ false: '#f28baf', true: '#4caf50' }}
+                    thumbColor={'#fff'}
+                    disabled={!canManage}
+                  />
+                  <Text style={{marginLeft: 8, fontSize: 13, color: (p.status === 'active' || p.status === undefined) ? '#4caf50' : '#f28baf'}}>
+                    {(p.status === 'active' || p.status === undefined) ? 'Hoạt động' : 'Nghỉ'}
+                  </Text>
+                </View>
+                <View style={{flex: 1, flexDirection: 'row', justifyContent: 'center'}}>
+                  {canManage && (
+                    <>
+                      <TouchableOpacity onPress={() => { setPersonnelForm({id: p.id, name: p.name, department_id: p.department_id}); setShowPersonnelModal(true); }} style={{marginRight: 10}}>
+                        <Ionicons name="pencil" size={18} color="#4a72b5" />
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => handleDeletePersonnel(p.id)}>
+                        <Ionicons name="trash" size={18} color="#f28baf" />
+                      </TouchableOpacity>
+                    </>
+                  )}
+                </View>
+              </View>
+            ))}
+            <Pagination 
+              currentPage={currentPage} 
+              totalPages={Math.ceil(filtered.length / ITEMS_PER_PAGE)} 
+              onPageChange={setCurrentPage} 
             />
-            <Text style={{marginLeft: 8, fontSize: 13, color: (p.status === 'active' || p.status === undefined) ? '#4caf50' : '#f28baf'}}>
-              {(p.status === 'active' || p.status === undefined) ? 'Hoạt động' : 'Nghỉ'}
-            </Text>
-          </View>
-          <View style={{flex: 1, flexDirection: 'row', justifyContent: 'center'}}>
-            {canManage && (
-              <>
-                <TouchableOpacity onPress={() => { setPersonnelForm({id: p.id, name: p.name, department_id: p.department_id}); setShowPersonnelModal(true); }} style={{marginRight: 10}}>
-                  <Ionicons name="pencil" size={18} color="#4a72b5" />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => handleDeletePersonnel(p.id)}>
-                  <Ionicons name="trash" size={18} color="#f28baf" />
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        </View>
-      ))}
+          </>
+        );
+      })()}
       {canManage && (
         <TouchableOpacity style={styles.addBtnRow} onPress={() => { setPersonnelForm({id: null, name: '', department_id: null}); setShowPersonnelModal(true); }}>
           <Ionicons name="add-circle" size={20} color="#4a72b5" />
@@ -225,34 +254,47 @@ const EmployeeManagement = () => {
         <Text style={[styles.cell, {flex: 1, fontWeight: 'bold'}]}>Trạng thái</Text>
         <Text style={[styles.cell, {flex: 2, textAlign: 'center', fontWeight: 'bold'}]}>Hành động</Text>
       </View>
-      {members.filter(m => !searchQuery || m.username?.toLowerCase().includes(searchQuery.toLowerCase()) || m.user_email?.toLowerCase().includes(searchQuery.toLowerCase()) || m.role?.toLowerCase().includes(searchQuery.toLowerCase())).map(m => (
-        <View key={m.user_id} style={styles.tableRow}>
-          <Text style={[styles.cell, {flex: 2}]}>{m.user_email || 'N/A'} {m.user_id === user.id ? '(Bạn)' : ''}</Text>
-          <Text style={[styles.cell, {flex: 2}]}>{m.username}</Text>
-          <View style={{flex: 1}}>
-            <View style={[styles.badge, m.role === 'owner' ? styles.badgeOwner : m.role === 'manager' ? styles.badgeManager : styles.badgeEmployee]}>
-              <Text style={styles.badgeText}>{m.role}</Text>
-            </View>
-          </View>
-          <View style={{flex: 1}}>
-            <Text style={{color: m.status === 'active' ? '#4a72b5' : '#ffa500', fontWeight: 'bold'}}>
-              {m.status === 'active' ? 'Đã duyệt' : 'Chờ duyệt'}
-            </Text>
-          </View>
-          <View style={{flex: 2, flexDirection: 'row', justifyContent: 'center'}}>
-            {m.status === 'pending' && (
-              <TouchableOpacity style={styles.actionBtn} onPress={() => handleApprove(m.user_id)}>
-                <Text style={styles.actionText}>Duyệt</Text>
-              </TouchableOpacity>
-            )}
-            {isOwner && m.role !== 'owner' && m.status === 'active' && (
-              <TouchableOpacity style={[styles.actionBtn, {backgroundColor: '#eee'}]} onPress={() => handleChangeRole(m.user_id, m.role)}>
-                <Text style={[styles.actionText, {color: '#555'}]}>{m.role === 'employee' ? 'Lên quản lý' : 'Hạ xuống NV'}</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        </View>
-      ))}
+      {(() => {
+        const filtered = members.filter(m => !searchQuery || m.username?.toLowerCase().includes(searchQuery.toLowerCase()) || m.user_email?.toLowerCase().includes(searchQuery.toLowerCase()) || m.role?.toLowerCase().includes(searchQuery.toLowerCase()));
+        const paginated = filtered.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+        return (
+          <>
+            {paginated.map(m => (
+              <View key={m.user_id} style={styles.tableRow}>
+                <Text style={[styles.cell, {flex: 2}]}>{m.user_email || 'N/A'} {m.user_id === user.id ? '(Bạn)' : ''}</Text>
+                <Text style={[styles.cell, {flex: 2}]}>{m.username}</Text>
+                <View style={{flex: 1}}>
+                  <View style={[styles.badge, m.role === 'owner' ? styles.badgeOwner : m.role === 'manager' ? styles.badgeManager : styles.badgeEmployee]}>
+                    <Text style={styles.badgeText}>{m.role}</Text>
+                  </View>
+                </View>
+                <View style={{flex: 1}}>
+                  <Text style={{color: m.status === 'active' ? '#4a72b5' : '#ffa500', fontWeight: 'bold'}}>
+                    {m.status === 'active' ? 'Đã duyệt' : 'Chờ duyệt'}
+                  </Text>
+                </View>
+                <View style={{flex: 2, flexDirection: 'row', justifyContent: 'center'}}>
+                  {m.status === 'pending' && (
+                    <TouchableOpacity style={styles.actionBtn} onPress={() => handleApprove(m.user_id)}>
+                      <Text style={styles.actionText}>Duyệt</Text>
+                    </TouchableOpacity>
+                  )}
+                  {isOwner && m.role !== 'owner' && m.status === 'active' && (
+                    <TouchableOpacity style={[styles.actionBtn, {backgroundColor: '#eee'}]} onPress={() => handleChangeRole(m.user_id, m.role)}>
+                      <Text style={[styles.actionText, {color: '#555'}]}>{m.role === 'employee' ? 'Lên quản lý' : 'Hạ xuống NV'}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            ))}
+            <Pagination 
+              currentPage={currentPage} 
+              totalPages={Math.ceil(filtered.length / ITEMS_PER_PAGE)} 
+              onPageChange={setCurrentPage} 
+            />
+          </>
+        );
+      })()}
     </View>
   );
 
@@ -328,27 +370,40 @@ const EmployeeManagement = () => {
       )}
 
       {/* Existing connections */}
-      {personnel.filter(p => p.user_id || p.enno).filter(p => !searchQuery || p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.user_username?.toLowerCase().includes(searchQuery.toLowerCase()) || p.enno?.toLowerCase().includes(searchQuery.toLowerCase())).map(p => (
-        <View key={p.id} style={styles.tableRow}>
-          <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>{p.name}</Text>
-          <Text style={[styles.cell, {flex: 2}]}>{p.user_username ? `${p.user_username} (${p.user_email || 'N/A'})` : '-'}</Text>
-          <Text style={[styles.cell, {flex: 2}]}>
-            {p.enno ? `${p.enno} - ${machineEmployees.find(m => m.enNo === p.enno)?.name || '?'}` : '-'}
-          </Text>
-          <View style={{flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center'}}>
-            <TouchableOpacity onPress={() => {
-              setConnForm({ personnel_id: p.id, user_id: p.user_id || '', enno: p.enno || '' });
-              setShowAddConnection(true);
-            }} style={{marginRight: 15}}>
-              <Ionicons name="pencil" size={16} color="#4a72b5" />
-            </TouchableOpacity>
-            
-            <TouchableOpacity onPress={() => handleDisconnect(p.id, p.user_id)}>
-              <Ionicons name="trash" size={16} color="#f28baf" />
-            </TouchableOpacity>
-          </View>
-        </View>
-      ))}
+      {(() => {
+        const filtered = personnel.filter(p => p.user_id || p.enno).filter(p => !searchQuery || p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.user_username?.toLowerCase().includes(searchQuery.toLowerCase()) || p.enno?.toLowerCase().includes(searchQuery.toLowerCase()));
+        const paginated = filtered.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+        return (
+          <>
+            {paginated.map(p => (
+              <View key={p.id} style={styles.tableRow}>
+                <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>{p.name}</Text>
+                <Text style={[styles.cell, {flex: 2}]}>{p.user_username ? `${p.user_username} (${p.user_email || 'N/A'})` : '-'}</Text>
+                <Text style={[styles.cell, {flex: 2}]}>
+                  {p.enno ? `${p.enno} - ${machineEmployees.find(m => m.enNo === p.enno)?.name || '?'}` : '-'}
+                </Text>
+                <View style={{flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center'}}>
+                  <TouchableOpacity onPress={() => {
+                    setConnForm({ personnel_id: p.id, user_id: p.user_id || '', enno: p.enno || '' });
+                    setShowAddConnection(true);
+                  }} style={{marginRight: 15}}>
+                    <Ionicons name="pencil" size={16} color="#4a72b5" />
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity onPress={() => handleDisconnect(p.id, p.user_id)}>
+                    <Ionicons name="trash" size={16} color="#f28baf" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+            <Pagination 
+              currentPage={currentPage} 
+              totalPages={Math.ceil(filtered.length / ITEMS_PER_PAGE)} 
+              onPageChange={setCurrentPage} 
+            />
+          </>
+        );
+      })()}
     </View>
   );
 

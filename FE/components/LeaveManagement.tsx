@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity
 import { Calendar } from 'react-native-calendars';
 import { useAuth } from '../context/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
+import Pagination from './Pagination';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -22,6 +23,9 @@ const LeaveManagement = () => {
   const { user, company } = useAuth();
   const [leaves, setLeaves] = useState([]);
   const [loading, setLoading] = useState(true);
+  
+  const ITEMS_PER_PAGE = 12;
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Form for employee
   const [dateStr, setDateStr] = useState('');
@@ -49,6 +53,7 @@ const LeaveManagement = () => {
       const data = await res.json();
       if (data.leaveRequests) {
         setLeaves(data.leaveRequests);
+        setCurrentPage(1);
       }
     } catch (err) {
       console.error(err);
@@ -127,15 +132,18 @@ const LeaveManagement = () => {
   };
 
   const handleApprove = async (id: string, status: 'approved' | 'rejected') => {
+    // Optimistic update: flip approval_status immediately
+    setLeaves(prev => prev.map((l: any) => l.id === id ? { ...l, approval_status: status } : l));
     try {
       await fetch(`${API_URL}/api/leave/${id}/approve`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approval_status: status }),
       });
-      fetchLeaves();
     } catch (err) {
       console.error(err);
+      // Revert on error
+      fetchLeaves();
     }
   };
 
@@ -291,7 +299,7 @@ const LeaveManagement = () => {
           <Text style={{padding: 20, textAlign: 'center', color: '#888'}}>Chưa có đơn vắng mặt nào.</Text>
         )}
 
-        {leaves.map((l: any) => (
+        {leaves.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE).map((l: any) => (
           <View key={l.id} style={styles.tableRow}>
             {!isEmployee && <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>{l.username}</Text>}
             <Text style={[styles.cell, {flex: 2}]}>{l.date}</Text>
@@ -323,6 +331,12 @@ const LeaveManagement = () => {
             </View>
           </View>
         ))}
+
+        <Pagination 
+          currentPage={currentPage} 
+          totalPages={Math.ceil(leaves.length / ITEMS_PER_PAGE)} 
+          onPageChange={setCurrentPage} 
+        />
       </View>
     </View>
   );
