@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { useAuth } from '../context/AuthContext';
+import SearchableDropdown from './SearchableDropdown';
 
 const CalendarView = () => {
   const { user, company } = useAuth();
@@ -10,25 +11,54 @@ const CalendarView = () => {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [monthOffset, setMonthOffset] = useState(0);
   const [selectedEmployee, setSelectedEmployee] = useState<string | null>(company.role === 'employee' ? company.linked_enno : null);
+  const [selectedDepartment, setSelectedDepartment] = useState<number | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [employees, setEmployees] = useState<any[]>([]);
   const [attendance, setAttendance] = useState<any[]>([]);
   const [leaves, setLeaves] = useState<any[]>([]);
+  const [personnel, setPersonnel] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
 
   const isEmployee = company.role === 'employee';
   const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 
   const fetchData = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/attendance?company_id=${company.company_id}&role=${company.role}&linked_enno=${company.linked_enno || ''}`);
+      const [res, resLeave] = await Promise.all([
+        fetch(`${API_URL}/api/attendance?company_id=${company.company_id}&role=${company.role}&linked_enno=${company.linked_enno || ''}`),
+        fetch(`${API_URL}/api/leave?company_id=${company.company_id}&user_id=${user.id}&role=${company.role}`)
+      ]);
       const data = await res.json();
       setEmployees(data.employees || []);
       setAttendance(data.attendanceLogs || []);
       
-      const resLeave = await fetch(`${API_URL}/api/leave?company_id=${company.company_id}&user_id=${user.id}&role=${company.role}`);
       const dataLeave = await resLeave.json();
       setLeaves(dataLeave.leaveRequests || []);
+
+      let fetchedEmployees = data.employees || [];
+
+      if (!isEmployee) {
+        const [resPersonnel, resDepts] = await Promise.all([
+          fetch(`${API_URL}/api/boss/personnel?company_id=${company.company_id}`),
+          fetch(`${API_URL}/api/boss/departments?company_id=${company.company_id}`)
+        ]);
+        const dataPersonnel = await resPersonnel.json();
+        const dataDepts = await resDepts.json();
+        
+        const personnelList = dataPersonnel.personnel || [];
+        setPersonnel(personnelList);
+        setDepartments(dataDepts.departments || []);
+
+        // Filter out inactive personnel
+        fetchedEmployees = fetchedEmployees.filter((emp: any) => {
+          const p = personnelList.find((p: any) => p.enno === emp.enNo);
+          if (p && p.status === 'inactive') return false;
+          return true;
+        });
+      }
+      
+      setEmployees(fetchedEmployees);
     } catch (err) {
       console.error('Error fetching data:', err);
     }
@@ -77,16 +107,24 @@ const CalendarView = () => {
     return (h || 0) * 3600 + (m || 0) * 60 + (s || 0);
   };
 
-  const getLateEmployees = (dateStr: string) => {
+  const isEmployeeInDept = (enNo: string) => {
+    if (!selectedDepartment) return true;
+    const p = personnel.find(p => p.enno === enNo);
+    return p && p.department_id === selectedDepartment;
+  };
+
+  const getLateEmployees = (dateStr: string, isWeekend: boolean) => {
+    if (isWeekend) return [];
     return attendance
-      .filter(a => a.date === dateStr && a.isLate && (!selectedEmployee || a.enNo === selectedEmployee))
+      .filter(a => a.date === dateStr && timeToSeconds(a.firstCheckIn) > 9 * 3600 && (!selectedEmployee || a.enNo === selectedEmployee) && isEmployeeInDept(a.enNo))
       .map(a => employees.find(e => e.enNo === a.enNo))
       .filter(Boolean);
   };
 
-  const getLeaveEarlyEmployees = (dateStr: string) => {
+  const getLeaveEarlyEmployees = (dateStr: string, isWeekend: boolean) => {
+    if (isWeekend) return [];
     return attendance
-      .filter(a => a.date === dateStr && timeToSeconds(a.lastCheckOut) < 18 * 3600 && (!selectedEmployee || a.enNo === selectedEmployee))
+      .filter(a => a.date === dateStr && timeToSeconds(a.lastCheckOut) < 18 * 3600 && (!selectedEmployee || a.enNo === selectedEmployee) && isEmployeeInDept(a.enNo))
       .map(a => employees.find(e => e.enNo === a.enNo))
       .filter(Boolean);
   };
@@ -99,6 +137,7 @@ const CalendarView = () => {
     if (dateStr >= todayStr) return [];
 
     return employees.filter(e => {
+      if (!isEmployeeInDept(e.enNo)) return false;
       if (selectedEmployee && e.enNo !== selectedEmployee) return false;
 
       const employeeLogs = attendance.filter(a => a.enNo === e.enNo);
@@ -110,17 +149,20 @@ const CalendarView = () => {
       const hasLog = employeeLogs.find(a => a.date === dateStr);
       if (hasLog) return false;
       
-      const hasLeave = leaves.find(l => l.date === dateStr && l.linked_enno === e.enNo);
+      const hasLeave = leaves.find(l => l.date === dateStr && l.linked_enno === e.enNo && l.approval_status === 'approved');
       if (hasLeave) return false;
 
       return true;
     });
   };
 
-  const getOnLeaveEmployees = (dateStr: string) => {
+  const getOnLeaveEmployees = (dateStr: string, isWeekend: boolean) => {
+    if (isWeekend) return [];
+
     return employees.filter(e => {
+      if (!isEmployeeInDept(e.enNo)) return false;
       if (selectedEmployee && e.enNo !== selectedEmployee) return false;
-      const hasLeave = leaves.find(l => l.date === dateStr && l.linked_enno === e.enNo);
+      const hasLeave = leaves.find(l => l.date === dateStr && l.linked_enno === e.enNo && l.approval_status === 'approved');
       return !!hasLeave;
     });
   };
@@ -182,12 +224,12 @@ const CalendarView = () => {
           let absentCount = 0;
           let earlyCount = 0;
           let leaveCount = 0;
-          if (cell.isCurrentMonth && cell.fullDate) {
-            lateCount = getLateEmployees(cell.fullDate).length;
-            absentCount = getAbsentEmployees(cell.fullDate, cell.isWeekend).length;
-            earlyCount = getLeaveEarlyEmployees(cell.fullDate).length;
-            leaveCount = getOnLeaveEmployees(cell.fullDate).length;
-          }
+            if (cell.isCurrentMonth && cell.fullDate) {
+              lateCount = getLateEmployees(cell.fullDate, cell.isWeekend).length;
+              absentCount = getAbsentEmployees(cell.fullDate, cell.isWeekend).length;
+              earlyCount = getLeaveEarlyEmployees(cell.fullDate, cell.isWeekend).length;
+              leaveCount = getOnLeaveEmployees(cell.fullDate, cell.isWeekend).length;
+            }
           
           return (
             <TouchableOpacity 
@@ -224,12 +266,14 @@ const CalendarView = () => {
     if (!selectedDate) return null;
     const isWeekend = new Date(selectedDate).getDay() === 0 || new Date(selectedDate).getDay() === 6;
     const absentEmps = getAbsentEmployees(selectedDate, isWeekend);
-    const leaveEmps = getOnLeaveEmployees(selectedDate);
+    const leaveEmps = getOnLeaveEmployees(selectedDate, isWeekend);
     
     const timelineLogs = attendance.filter(a => 
+      !isWeekend &&
       a.date === selectedDate && 
       (a.isLate || timeToSeconds(a.lastCheckOut) < 18 * 3600) &&
-      (!selectedEmployee || a.enNo === selectedEmployee)
+      (!selectedEmployee || a.enNo === selectedEmployee) &&
+      isEmployeeInDept(a.enNo)
     );
     const timelineEmps = timelineLogs.map(a => {
       const emp = employees.find(e => e.enNo === a.enNo);
@@ -322,7 +366,18 @@ const CalendarView = () => {
                          backgroundColor: emp.color,
                          borderRadius: 12
                        }} />
-                       <Text style={{position: 'absolute', left: `${leftPercent}%`, paddingLeft: 8, fontSize: 10, color: '#fff', fontWeight: 'bold', lineHeight: 24}}>
+                       <Text style={{
+                          position: 'absolute',
+                          left: `${leftPercent}%`,
+                          paddingLeft: 8,
+                          fontSize: 10,
+                          color: '#fff',
+                          fontWeight: 'bold',
+                          lineHeight: 24,
+                          textShadowColor: 'rgba(0,0,0,0.85)',
+                          textShadowOffset: { width: 0.5, height: 0.5 },
+                          textShadowRadius: 2,
+                        }}>
                          {emp.firstCheckIn.slice(0,5)} - {emp.lastCheckOut.slice(0,5)}
                        </Text>
                     </View>
@@ -338,12 +393,6 @@ const CalendarView = () => {
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
       <View style={styles.topActionsContainer}>
-        <View style={styles.modeSelectorContainer}>
-          <TouchableOpacity style={styles.modeBtnActive}>
-            <Text style={styles.modeBtnTextActive}>Chế độ Tháng</Text>
-          </TouchableOpacity>
-        </View>
-
         {!isEmployee && (
           <TouchableOpacity style={styles.uploadBtn} onPress={handleUpload} disabled={loading}>
             {loading ? (
@@ -359,25 +408,39 @@ const CalendarView = () => {
       </View>
 
       {!isEmployee && (
-        <View style={{ marginBottom: 20 }}>
-          <Text style={{ fontWeight: 'bold', marginBottom: 10 }}>Lọc theo nhân viên:</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-            <TouchableOpacity 
-              style={[styles.filterPill, !selectedEmployee && styles.filterPillActive]}
-              onPress={() => setSelectedEmployee(null)}
-            >
-              <Text style={[styles.filterPillText, !selectedEmployee && styles.filterPillTextActive]}>Tất cả</Text>
-            </TouchableOpacity>
-            {employees.map(e => (
-              <TouchableOpacity 
-                key={e.enNo}
-                style={[styles.filterPill, selectedEmployee === e.enNo && styles.filterPillActive]}
-                onPress={() => setSelectedEmployee(e.enNo)}
-              >
-                <Text style={[styles.filterPillText, selectedEmployee === e.enNo && styles.filterPillTextActive]}>{e.name}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+        <View style={{ marginBottom: 20, zIndex: 9999, flexDirection: 'row', gap: 15 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: 'bold', marginBottom: 10 }}>Lọc theo bộ phận:</Text>
+            <SearchableDropdown
+              data={departments}
+              value={selectedDepartment}
+              onChange={(val) => {
+                setSelectedDepartment(val);
+                setSelectedEmployee(null); // Reset employee when changing department
+              }}
+              placeholder="Tất cả bộ phận"
+              searchPlaceholder="Tìm kiếm bộ phận..."
+              keyExtractor={(item) => item.id}
+              labelExtractor={(item) => item.name}
+              showClear={true}
+              style={{ width: '100%', maxWidth: 300 }}
+            />
+          </View>
+
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: 'bold', marginBottom: 10 }}>Lọc theo nhân viên:</Text>
+            <SearchableDropdown
+              data={employees.filter(e => isEmployeeInDept(e.enNo))}
+              value={selectedEmployee}
+              onChange={setSelectedEmployee}
+              placeholder="Tất cả nhân viên"
+              searchPlaceholder="Tìm kiếm nhân viên..."
+              keyExtractor={(item) => item.enNo}
+              labelExtractor={(item) => item.name}
+              showClear={true}
+              style={{ width: '100%', maxWidth: 300 }}
+            />
+          </View>
         </View>
       )}
 
@@ -407,7 +470,7 @@ const styles = StyleSheet.create({
   },
   topActionsContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'center',
     marginBottom: 20,
   },

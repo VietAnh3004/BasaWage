@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, TextInput, Modal } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, TextInput, Modal, Switch } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
+import SearchableDropdown from './SearchableDropdown';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -9,6 +10,7 @@ const EmployeeManagement = () => {
   const { user, company } = useAuth();
   
   const [viewMode, setViewMode] = useState<'personnel' | 'users' | 'connections'>('personnel');
+  const [searchQuery, setSearchQuery] = useState('');
   
   const [members, setMembers] = useState<any[]>([]);
   const [machineEmployees, setMachineEmployees] = useState<any[]>([]);
@@ -142,6 +144,27 @@ const EmployeeManagement = () => {
     } catch (e) { console.error(e); }
   };
 
+  const handleToggleStatus = async (id: string, currentStatus: string) => {
+    const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+    try {
+      await fetch(`${API_URL}/api/boss/personnel/${id}/status`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      fetchData();
+    } catch (e) { console.error(e); }
+  };
+
+  const handleDisconnect = async (personnel_id: string, user_id: string | null) => {
+    try {
+      await fetch(`${API_URL}/api/boss/personnel/disconnect`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: company.company_id, personnel_id, user_id })
+      });
+      fetchData();
+    } catch (e) { console.error(e); }
+  };
+
   if (loading) {
     return <ActivityIndicator size="large" color="#4a72b5" style={{marginTop: 50}} />;
   }
@@ -151,12 +174,25 @@ const EmployeeManagement = () => {
       <View style={styles.tableHeader}>
         <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Họ và tên</Text>
         <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Bộ phận</Text>
+        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Trạng thái</Text>
         <Text style={[styles.cell, {flex: 1, textAlign: 'center', fontWeight: 'bold'}]}>Hành động</Text>
       </View>
-      {personnel.map(p => (
+      {personnel.filter(p => !searchQuery || p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.department_name?.toLowerCase().includes(searchQuery.toLowerCase())).map(p => (
         <View key={p.id} style={styles.tableRow}>
           <Text style={[styles.cell, {flex: 2}]}>{p.name}</Text>
           <Text style={[styles.cell, {flex: 2}]}>{p.department_name || '-'}</Text>
+          <View style={{flex: 2, flexDirection: 'row', alignItems: 'center'}}>
+            <Switch
+              value={p.status === 'active' || p.status === undefined}
+              onValueChange={() => handleToggleStatus(p.id, p.status || 'active')}
+              trackColor={{ false: '#f28baf', true: '#4caf50' }}
+              thumbColor={'#fff'}
+              disabled={!canManage}
+            />
+            <Text style={{marginLeft: 8, fontSize: 13, color: (p.status === 'active' || p.status === undefined) ? '#4caf50' : '#f28baf'}}>
+              {(p.status === 'active' || p.status === undefined) ? 'Hoạt động' : 'Nghỉ'}
+            </Text>
+          </View>
           <View style={{flex: 1, flexDirection: 'row', justifyContent: 'center'}}>
             {canManage && (
               <>
@@ -189,7 +225,7 @@ const EmployeeManagement = () => {
         <Text style={[styles.cell, {flex: 1, fontWeight: 'bold'}]}>Trạng thái</Text>
         <Text style={[styles.cell, {flex: 2, textAlign: 'center', fontWeight: 'bold'}]}>Hành động</Text>
       </View>
-      {members.map(m => (
+      {members.filter(m => !searchQuery || m.username?.toLowerCase().includes(searchQuery.toLowerCase()) || m.user_email?.toLowerCase().includes(searchQuery.toLowerCase()) || m.role?.toLowerCase().includes(searchQuery.toLowerCase())).map(m => (
         <View key={m.user_id} style={styles.tableRow}>
           <Text style={[styles.cell, {flex: 2}]}>{m.user_email || 'N/A'} {m.user_id === user.id ? '(Bạn)' : ''}</Text>
           <Text style={[styles.cell, {flex: 2}]}>{m.username}</Text>
@@ -232,67 +268,52 @@ const EmployeeManagement = () => {
       {showAddConnection && (
         <View style={[styles.tableRow, {backgroundColor: '#f5f8fd', zIndex: 999}]}>
           {/* Personnel Dropdown */}
-          <View style={{flex: 2, position: 'relative', paddingRight: 10}}>
-            <TouchableOpacity style={styles.dropdownBtn} onPress={() => setOpenDropdown(openDropdown === 'personnel' ? '' : 'personnel')}>
-              <Text numberOfLines={1}>{personnel.find(p => p.id === connForm.personnel_id)?.name || 'Chọn nhân sự...'}</Text>
-              <Ionicons name="chevron-down" size={14} />
-            </TouchableOpacity>
-            {openDropdown === 'personnel' && (
-              <ScrollView style={styles.dropdownList}>
-                {personnel.map(p => (
-                  <TouchableOpacity key={p.id} style={styles.dropdownItem} onPress={() => { setConnForm({...connForm, personnel_id: p.id}); setOpenDropdown(''); }}>
-                    <Text>{p.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
+          <View style={{flex: 2, position: 'relative', paddingRight: 10, zIndex: 3000}}>
+            <SearchableDropdown
+              data={personnel}
+              value={connForm.personnel_id}
+              onChange={(val) => setConnForm({...connForm, personnel_id: val})}
+              placeholder="Chọn nhân sự..."
+              searchPlaceholder="Tìm kiếm nhân sự..."
+              keyExtractor={item => item.id}
+              labelExtractor={item => item.name}
+              showClear={false}
+            />
           </View>
           
           {/* User Account Dropdown */}
-          <View style={{flex: 2, position: 'relative', paddingRight: 10}}>
-            <TouchableOpacity style={styles.dropdownBtn} onPress={() => setOpenDropdown(openDropdown === 'user' ? '' : 'user')}>
-              <Text numberOfLines={1}>{members.find(m => m.user_id === connForm.user_id)?.username || 'Chọn tài khoản...'}</Text>
-              <Ionicons name="chevron-down" size={14} />
-            </TouchableOpacity>
-            {openDropdown === 'user' && (
-              <ScrollView style={styles.dropdownList}>
-                <TouchableOpacity style={styles.dropdownItem} onPress={() => { setConnForm({...connForm, user_id: ''}); setOpenDropdown(''); }}>
-                  <Text style={{color: '#888', fontStyle: 'italic'}}>Bỏ trống</Text>
-                </TouchableOpacity>
-                {members.map(m => (
-                  <TouchableOpacity key={m.user_id} style={styles.dropdownItem} onPress={() => { setConnForm({...connForm, user_id: m.user_id}); setOpenDropdown(''); }}>
-                    <Text>{m.username} ({m.user_email || 'N/A'})</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
+          <View style={{flex: 2, position: 'relative', paddingRight: 10, zIndex: 2000}}>
+            <SearchableDropdown
+              data={members}
+              value={connForm.user_id}
+              onChange={(val) => setConnForm({...connForm, user_id: val})}
+              placeholder="Chọn tài khoản..."
+              searchPlaceholder="Tìm kiếm tài khoản..."
+              keyExtractor={item => item.user_id}
+              labelExtractor={item => `${item.username} (${item.user_email || 'N/A'})`}
+              showClear={true}
+            />
           </View>
           
           {/* Timeclock Dropdown */}
-          <View style={{flex: 2, position: 'relative', paddingRight: 10}}>
-            <TouchableOpacity style={styles.dropdownBtn} onPress={() => setOpenDropdown(openDropdown === 'enno' ? '' : 'enno')}>
-              <Text numberOfLines={1}>{machineEmployees.find(m => m.enNo === connForm.enno)?.name ? `${connForm.enno} - ${machineEmployees.find(m => m.enNo === connForm.enno)?.name}` : 'Chọn ID máy...'}</Text>
-              <Ionicons name="chevron-down" size={14} />
-            </TouchableOpacity>
-            {openDropdown === 'enno' && (
-              <ScrollView style={styles.dropdownList}>
-                <TouchableOpacity style={styles.dropdownItem} onPress={() => { setConnForm({...connForm, enno: ''}); setOpenDropdown(''); }}>
-                  <Text style={{color: '#888', fontStyle: 'italic'}}>Bỏ trống</Text>
-                </TouchableOpacity>
-                {machineEmployees.map(m => (
-                  <TouchableOpacity key={m.enNo} style={styles.dropdownItem} onPress={() => { setConnForm({...connForm, enno: m.enNo}); setOpenDropdown(''); }}>
-                    <Text>{m.enNo} - {m.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
+          <View style={{flex: 2, position: 'relative', paddingRight: 10, zIndex: 1000}}>
+            <SearchableDropdown
+              data={machineEmployees}
+              value={connForm.enno}
+              onChange={(val) => setConnForm({...connForm, enno: val})}
+              placeholder="Chọn ID máy..."
+              searchPlaceholder="Tìm kiếm ID máy..."
+              keyExtractor={item => item.enNo}
+              labelExtractor={item => `${item.enNo} - ${item.name}`}
+              showClear={true}
+            />
           </View>
           
           <View style={{flex: 1, flexDirection: 'row', justifyContent: 'center'}}>
             <TouchableOpacity style={styles.saveBtn} onPress={handleSaveConnection}>
               <Ionicons name="checkmark" size={18} color="#fff" />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.cancelBtn} onPress={() => { setShowAddConnection(false); setOpenDropdown(''); }}>
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => { setShowAddConnection(false); }}>
               <Ionicons name="close" size={18} color="#fff" />
             </TouchableOpacity>
           </View>
@@ -307,19 +328,23 @@ const EmployeeManagement = () => {
       )}
 
       {/* Existing connections */}
-      {personnel.filter(p => p.user_id || p.enno).map(p => (
+      {personnel.filter(p => p.user_id || p.enno).filter(p => !searchQuery || p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.user_username?.toLowerCase().includes(searchQuery.toLowerCase()) || p.enno?.toLowerCase().includes(searchQuery.toLowerCase())).map(p => (
         <View key={p.id} style={styles.tableRow}>
           <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>{p.name}</Text>
           <Text style={[styles.cell, {flex: 2}]}>{p.user_username ? `${p.user_username} (${p.user_email || 'N/A'})` : '-'}</Text>
           <Text style={[styles.cell, {flex: 2}]}>
             {p.enno ? `${p.enno} - ${machineEmployees.find(m => m.enNo === p.enno)?.name || '?'}` : '-'}
           </Text>
-          <View style={{flex: 1, alignItems: 'center'}}>
+          <View style={{flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center'}}>
             <TouchableOpacity onPress={() => {
               setConnForm({ personnel_id: p.id, user_id: p.user_id || '', enno: p.enno || '' });
               setShowAddConnection(true);
-            }}>
-              <Ionicons name="pencil" size={16} color="#888" />
+            }} style={{marginRight: 15}}>
+              <Ionicons name="pencil" size={16} color="#4a72b5" />
+            </TouchableOpacity>
+            
+            <TouchableOpacity onPress={() => handleDisconnect(p.id, p.user_id)}>
+              <Ionicons name="trash" size={16} color="#f28baf" />
             </TouchableOpacity>
           </View>
         </View>
@@ -360,6 +385,15 @@ const EmployeeManagement = () => {
         <TouchableOpacity style={[styles.tabBtn, viewMode === 'connections' && styles.tabBtnActive]} onPress={() => setViewMode('connections')}>
           <Text style={[styles.tabText, viewMode === 'connections' && styles.tabTextActive]}>Kết nối</Text>
         </TouchableOpacity>
+      </View>
+
+      <View style={{ marginBottom: 15 }}>
+        <TextInput
+          style={{ borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10, fontSize: 14, backgroundColor: '#fff' }}
+          placeholder="Nhập từ khóa để tìm kiếm..."
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
       </View>
 
       {viewMode === 'personnel' && renderPersonnelView()}

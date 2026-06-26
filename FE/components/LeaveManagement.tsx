@@ -2,21 +2,45 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, TextInput, Modal } from 'react-native';
 import { Calendar } from 'react-native-calendars';
 import { useAuth } from '../context/AuthContext';
+import { Ionicons } from '@expo/vector-icons';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
+
+const STATUS_COLOR: Record<string, string> = {
+  approved: '#4caf50',
+  pending: '#ffa500',
+  rejected: '#f44336',
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  approved: 'Đã duyệt',
+  pending: 'Chờ duyệt',
+  rejected: 'Từ chối',
+};
 
 const LeaveManagement = () => {
   const { user, company } = useAuth();
   const [leaves, setLeaves] = useState([]);
   const [loading, setLoading] = useState(true);
-  
+
   // Form for employee
   const [dateStr, setDateStr] = useState('');
   const [reason, setReason] = useState('');
+  const [leaveType, setLeaveType] = useState('Nghỉ phép');
   const [submitting, setSubmitting] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
 
+  // Leave type dropdown
+  const [leaveTypes, setLeaveTypes] = useState<string[]>(['Nghỉ phép', 'Công tác']);
+  const [showTypeDropdown, setShowTypeDropdown] = useState(false);
+  const [showAddTypeInput, setShowAddTypeInput] = useState(false);
+  const [newTypeName, setNewTypeName] = useState('');
+
   const isEmployee = company.role === 'employee';
+  const isManager = company.role === 'manager';
+  const isOwner = company.role === 'owner';
+  const canSubmitLeave = isEmployee || isManager; // managers can also submit leave
+  const canApprove = isOwner || isManager; // both can approve, but managers can't approve manager-submitted leaves
 
   const fetchLeaves = async () => {
     setLoading(true);
@@ -32,8 +56,21 @@ const LeaveManagement = () => {
     setLoading(false);
   };
 
+  const fetchLeaveTypes = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/leave-types?company_id=${company.company_id}`);
+      const data = await res.json();
+      if (data.leaveTypes && data.leaveTypes.length > 0) {
+        setLeaveTypes(data.leaveTypes.map((t: any) => t.name));
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     fetchLeaves();
+    fetchLeaveTypes();
   }, []);
 
   const handleSubmitLeave = async () => {
@@ -50,14 +87,20 @@ const LeaveManagement = () => {
           user_id: user.id,
           company_id: company.company_id,
           date: dateStr,
-          reason
+          reason,
+          leave_type: leaveType,
+          submitter_role: company.role,
         })
       });
       if (res.ok) {
         setDateStr('');
         setReason('');
+        setLeaveType('Nghỉ phép');
         fetchLeaves();
-        alert("Đã tạo đơn xin nghỉ thành công!");
+        const msg = leaveType === 'Nghỉ phép'
+          ? "Đã tạo đơn vắng mặt thành công!"
+          : "Đã gửi đơn, chờ Sếp tổng phê duyệt!";
+        alert(msg);
       }
     } catch (err) {
       console.error(err);
@@ -66,48 +109,149 @@ const LeaveManagement = () => {
     setSubmitting(false);
   };
 
+  const handleRecallLeave = async (id: string) => {
+    if (!confirm("Bạn có chắc muốn rút lại đơn vắng mặt này không?")) return;
+    try {
+      const res = await fetch(`${API_URL}/api/leave/${id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (res.ok) {
+        fetchLeaves();
+        alert("Đã rút lại đơn.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Lỗi kết nối");
+    }
+  };
+
+  const handleApprove = async (id: string, status: 'approved' | 'rejected') => {
+    try {
+      await fetch(`${API_URL}/api/leave/${id}/approve`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approval_status: status }),
+      });
+      fetchLeaves();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAddLeaveType = async () => {
+    if (!newTypeName.trim()) return;
+    try {
+      await fetch(`${API_URL}/api/leave-types`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: company.company_id, name: newTypeName.trim() }),
+      });
+      setNewTypeName('');
+      setShowAddTypeInput(false);
+      fetchLeaveTypes();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   if (loading) {
     return <ActivityIndicator size="large" color="#4a72b5" style={{marginTop: 50}} />;
   }
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Quản lý Nghỉ phép</Text>
+      <Text style={styles.title}>Quản lý Vắng mặt</Text>
       <Text style={styles.subtitle}>
-        {isEmployee ? "Bạn có thể gửi đơn xin nghỉ tại đây. Đơn sẽ tự động được ghi nhận." : "Xem danh sách nhân viên xin nghỉ phép của công ty."}
+        {canSubmitLeave ? "Bạn có thể gửi đơn xin vắng mặt tại đây." : "Xem và duyệt đơn vắng mặt của nhân viên."}
       </Text>
 
-      {isEmployee && (
+      {canSubmitLeave && (
         <View style={styles.formCard}>
-          <Text style={styles.formTitle}>Tạo đơn nghỉ phép mới</Text>
-          
+          <Text style={styles.formTitle}>Tạo đơn xin vắng mặt mới</Text>
+
+          {/* Row 1: Date + Reason */}
           <View style={styles.inputRow}>
             <View style={{flex: 1, marginRight: 15}}>
-              <Text style={styles.label}>Ngày nghỉ (YYYY-MM-DD)</Text>
+              <Text style={styles.label}>Ngày vắng mặt</Text>
               <TouchableOpacity style={styles.dateSelector} onPress={() => setShowCalendar(true)}>
                 <Text style={{color: dateStr ? '#333' : '#888'}}>
-                  {dateStr || 'Chọn ngày nghỉ...'}
+                  {dateStr || 'Chọn ngày...'}
                 </Text>
               </TouchableOpacity>
             </View>
             <View style={{flex: 2}}>
               <Text style={styles.label}>Lý do</Text>
-              <TextInput 
-                style={styles.input} 
-                value={reason} 
-                onChangeText={setReason} 
-                placeholder="Lý do nghỉ..." 
+              <TextInput
+                style={styles.input}
+                value={reason}
+                onChangeText={setReason}
+                placeholder="Lý do vắng mặt..."
               />
             </View>
           </View>
-          
+
+          {/* Row 2: Leave type - uses position:relative wrapper so dropdown overlays below */}
+          <View style={{marginBottom: 12, position: 'relative', maxWidth: 260, zIndex: 100}}>
+            <Text style={styles.label}>Loại</Text>
+            <TouchableOpacity
+              style={[styles.dateSelector, {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between'}]}
+              onPress={() => setShowTypeDropdown(!showTypeDropdown)}
+            >
+              <Text style={{color: '#333'}}>{leaveType}</Text>
+              <Ionicons name={showTypeDropdown ? 'chevron-up' : 'chevron-down'} size={16} color="#888" />
+            </TouchableOpacity>
+
+            {showTypeDropdown && (
+              <View style={styles.typeDropdown}>
+                {leaveTypes.map(t => (
+                  <TouchableOpacity
+                    key={t}
+                    style={styles.typeDropdownItem}
+                    onPress={() => { setLeaveType(t); setShowTypeDropdown(false); }}
+                  >
+                    <Text style={{color: leaveType === t ? '#4a72b5' : '#333', fontWeight: leaveType === t ? 'bold' : 'normal'}}>{t}</Text>
+                  </TouchableOpacity>
+                ))}
+                {!showAddTypeInput ? (
+                  <TouchableOpacity style={styles.typeDropdownAddBtn} onPress={() => setShowAddTypeInput(true)}>
+                    <Ionicons name="add-circle-outline" size={16} color="#4a72b5" />
+                    <Text style={{color: '#4a72b5', marginLeft: 6}}>Thêm loại mới</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={{flexDirection: 'row', padding: 10, alignItems: 'center', gap: 8}}>
+                    <TextInput
+                      style={{flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 6, padding: 8, fontSize: 13}}
+                      placeholder="Tên loại đơn..."
+                      value={newTypeName}
+                      onChangeText={setNewTypeName}
+                      autoFocus
+                    />
+                    <TouchableOpacity onPress={handleAddLeaveType} style={{backgroundColor: '#4a72b5', borderRadius: 6, padding: 8}}>
+                      <Ionicons name="checkmark" size={16} color="#fff" />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => { setShowAddTypeInput(false); setNewTypeName(''); }} style={{padding: 8}}>
+                      <Ionicons name="close" size={16} color="#999" />
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            )}
+          </View>
+
+          {leaveType !== 'Nghỉ phép' && (
+            <Text style={{fontSize: 12, color: '#ffa500', marginBottom: 14}}>
+              ⚠ Đơn loại "{leaveType}" sẽ cần được quản lý phê duyệt trước khi có hiệu lực.
+            </Text>
+          )}
+
           <TouchableOpacity style={styles.submitBtn} onPress={handleSubmitLeave} disabled={submitting}>
             <Text style={styles.submitBtnText}>{submitting ? 'Đang gửi...' : 'Gửi Đơn'}</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Modal Lịch Xịn Xò */}
+      {/* Calendar Modal */}
       <Modal visible={showCalendar} transparent={true} animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -132,25 +276,51 @@ const LeaveManagement = () => {
         </View>
       </Modal>
 
-      <Text style={styles.listTitle}>Danh sách đơn nghỉ phép</Text>
+      <Text style={styles.listTitle}>Danh sách đơn vắng mặt</Text>
       <View style={styles.table}>
         <View style={styles.tableHeader}>
           {!isEmployee && <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Người gửi</Text>}
-          <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Ngày nghỉ</Text>
+          <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Ngày</Text>
+          <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Loại</Text>
           <Text style={[styles.cell, {flex: 3, fontWeight: 'bold'}]}>Lý do</Text>
-          <Text style={[styles.cell, {flex: 1, fontWeight: 'bold', textAlign: 'right'}]}>Trạng thái</Text>
+          <Text style={[styles.cell, {flex: 1.5, fontWeight: 'bold', textAlign: 'center'}]}>Trạng thái</Text>
+          <Text style={[styles.cell, {flex: 2, fontWeight: 'bold', textAlign: 'center'}]}>Thao tác</Text>
         </View>
 
         {leaves.length === 0 && (
-           <Text style={{padding: 20, textAlign: 'center', color: '#888'}}>Chưa có đơn nghỉ phép nào.</Text>
+          <Text style={{padding: 20, textAlign: 'center', color: '#888'}}>Chưa có đơn vắng mặt nào.</Text>
         )}
 
-        {leaves.map(l => (
+        {leaves.map((l: any) => (
           <View key={l.id} style={styles.tableRow}>
             {!isEmployee && <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>{l.username}</Text>}
             <Text style={[styles.cell, {flex: 2}]}>{l.date}</Text>
+            <Text style={[styles.cell, {flex: 2}]}>{l.leave_type || 'Nghỉ phép'}</Text>
             <Text style={[styles.cell, {flex: 3, color: '#666'}]}>{l.reason}</Text>
-            <Text style={[styles.cell, {flex: 1, textAlign: 'right', color: '#4a72b5', fontWeight: 'bold'}]}>Đã ghi nhận</Text>
+            <View style={[styles.cell, {flex: 1.5, alignItems: 'center'}]}>
+              <Text style={{color: STATUS_COLOR[l.approval_status] || '#666', fontWeight: 'bold', fontSize: 12}}>
+                {STATUS_LABEL[l.approval_status] || l.approval_status}
+              </Text>
+            </View>
+            <View style={[styles.cell, {flex: 2, flexDirection: 'row', justifyContent: 'center', gap: 8}]}>
+              {/* Boss/Manager approve/reject pending — manager cannot approve manager-submitted leaves */}
+              {canApprove && l.approval_status === 'pending' && l.user_id !== user.id && !(isManager && l.submitter_role === 'manager') && (
+                <>
+                  <TouchableOpacity onPress={() => handleApprove(l.id, 'approved')} style={[styles.actionBtn, {backgroundColor: '#4caf50'}]}>
+                    <Text style={styles.actionBtnText}>Duyệt</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleApprove(l.id, 'rejected')} style={[styles.actionBtn, {backgroundColor: '#f44336'}]}>
+                    <Text style={styles.actionBtnText}>Từ chối</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+              {/* Owner of the leave can recall if still pending or approved */}
+              {l.user_id === user.id && l.approval_status !== 'rejected' && (
+                <TouchableOpacity onPress={() => handleRecallLeave(l.id)}>
+                  <Text style={{color: '#f28baf', fontWeight: 'bold', fontSize: 13}}>Rút lại</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
         ))}
       </View>
@@ -180,6 +350,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#eee',
     marginBottom: 30,
+    zIndex: 10,
   },
   formTitle: {
     fontSize: 16,
@@ -215,6 +386,32 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     height: 40,
   },
+  typeDropdown: {
+    position: 'absolute',
+    top: 66,
+    left: 0,
+    right: 0,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 6,
+    zIndex: 9999,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+  },
+  typeDropdownItem: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  typeDropdownAddBtn: {
+    flexDirection: 'row',
+    padding: 12,
+    alignItems: 'center',
+    backgroundColor: '#f5f8fd',
+  },
   submitBtn: {
     backgroundColor: '#4a72b5',
     padding: 12,
@@ -249,19 +446,30 @@ const styles = StyleSheet.create({
   },
   tableRow: {
     flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
     paddingVertical: 12,
     paddingHorizontal: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f5f5f5',
     alignItems: 'center',
   },
   cell: {
     fontSize: 14,
     color: '#444',
+    paddingRight: 8,
+  },
+  actionBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 5,
+  },
+  actionBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 12,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(0,0,0,0.4)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -269,25 +477,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 12,
     padding: 20,
-    width: '90%',
-    maxWidth: 400,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.25,
-    shadowRadius: 20,
-    elevation: 5,
+    width: 340,
   },
   closeModalBtn: {
     marginTop: 15,
+    backgroundColor: '#f5f5f5',
     padding: 10,
-    backgroundColor: '#eee',
-    borderRadius: 8,
+    borderRadius: 6,
     alignItems: 'center',
   },
   closeModalText: {
     fontWeight: 'bold',
     color: '#555',
-  }
+  },
 });
 
 export default LeaveManagement;

@@ -98,7 +98,7 @@ app.get('/api/boss/members', async (req, res) => {
   const { company_id } = req.query;
   try {
     const result = await db.query(`
-      SELECT cm.user_id, u.username, cm.role, cm.status, cm.linked_enno 
+      SELECT cm.user_id, u.username, u.email as user_email, cm.role, cm.status, cm.linked_enno 
       FROM CompanyMembers cm
       JOIN Users u ON u.id = cm.user_id
       WHERE cm.company_id = $1
@@ -208,6 +208,20 @@ app.put('/api/boss/personnel/:id', async (req, res) => {
   }
 });
 
+app.put('/api/boss/personnel/:id/status', async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+  try {
+    await db.query(
+      'UPDATE Personnel SET status = $1 WHERE id = $2',
+      [status, id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 app.delete('/api/boss/personnel/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -249,11 +263,69 @@ app.post('/api/boss/personnel/connect', async (req, res) => {
   }
 });
 
+app.post('/api/boss/personnel/disconnect', async (req, res) => {
+  const { company_id, personnel_id, user_id } = req.body;
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    // Clear personnel record
+    await client.query(
+      'UPDATE Personnel SET user_id = NULL, enno = NULL WHERE id = $1 AND company_id = $2',
+      [personnel_id, company_id]
+    );
+
+    // Sync CompanyMembers linked_enno so attendance logic is cleared
+    if (user_id) {
+      await client.query(
+        'UPDATE CompanyMembers SET linked_enno = NULL WHERE user_id = $1 AND company_id = $2',
+        [user_id, company_id]
+      );
+    }
+    
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
 // --- LEAVE API ---
 app.post('/api/leave', async (req, res) => {
-  const { user_id, company_id, date, reason } = req.body;
+  const { user_id, company_id, date, reason, leave_type, submitter_role } = req.body;
+  // Auto-approve only 'Nghỉ phép', all others require approval
+  const approval_status = (leave_type === 'Nghỉ phép' || !leave_type) ? 'approved' : 'pending';
   try {
-    await db.query('INSERT INTO LeaveRequests (user_id, company_id, date, reason) VALUES ($1, $2, $3, $4)', [user_id, company_id, date, reason]);
+    await db.query(
+      'INSERT INTO LeaveRequests (user_id, company_id, date, reason, leave_type, approval_status, submitter_role) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [user_id, company_id, date, reason, leave_type || 'Nghỉ phép', approval_status, submitter_role || 'employee']
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.delete('/api/leave/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await db.query('DELETE FROM LeaveRequests WHERE id = $1', [id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.put('/api/leave/:id/approve', async (req, res) => {
+  const { id } = req.params;
+  const { approval_status } = req.body; // 'approved' or 'rejected'
+  try {
+    await db.query('UPDATE LeaveRequests SET approval_status = $1 WHERE id = $2', [approval_status, id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -264,7 +336,7 @@ app.get('/api/leave', async (req, res) => {
   const { company_id, user_id, role } = req.query;
   try {
     let q = `
-      SELECT l.*, u.username, cm.linked_enno 
+      SELECT l.*, u.username, cm.linked_enno, cm.role as submitter_role
       FROM LeaveRequests l 
       JOIN Users u ON u.id = l.user_id 
       LEFT JOIN CompanyMembers cm ON cm.user_id = l.user_id AND cm.company_id = l.company_id
@@ -274,9 +346,37 @@ app.get('/api/leave', async (req, res) => {
     if (role === 'employee') {
       q += ` AND l.user_id = $2`;
       params.push(user_id);
+    } else if (role === 'manager') {
+      // Manager sees all (their own + employees), but NOT other managers' private data
+      // We still return all but FE handles approve button visibility
     }
+    q += ' ORDER BY l.id DESC';
     const result = await db.query(q, params);
     res.json({ leaveRequests: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- LEAVE TYPES API ---
+app.get('/api/leave-types', async (req, res) => {
+  const { company_id } = req.query;
+  try {
+    const result = await db.query('SELECT * FROM LeaveTypes WHERE company_id = $1 ORDER BY id ASC', [company_id]);
+    res.json({ leaveTypes: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/leave-types', async (req, res) => {
+  const { company_id, name } = req.body;
+  try {
+    const result = await db.query(
+      'INSERT INTO LeaveTypes (company_id, name) VALUES ($1, $2) ON CONFLICT (company_id, name) DO NOTHING RETURNING *',
+      [company_id, name]
+    );
+    res.json({ success: true, leaveType: result.rows[0] });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }

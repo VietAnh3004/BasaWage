@@ -87,7 +87,8 @@ const initDb = async () => {
         name TEXT NOT NULL,
         department_id INTEGER REFERENCES Departments(id) ON DELETE SET NULL,
         user_id INTEGER REFERENCES Users(id) ON DELETE SET NULL,
-        enno TEXT
+        enno TEXT,
+        status VARCHAR(20) DEFAULT 'active'
       )
     `);
 
@@ -124,9 +125,35 @@ const initDb = async () => {
         user_id INTEGER REFERENCES Users(id) ON DELETE CASCADE,
         company_id INTEGER REFERENCES Companies(id) ON DELETE CASCADE,
         date TEXT NOT NULL,
-        reason TEXT
+        reason TEXT,
+        leave_type VARCHAR(100) DEFAULT 'Nghỉ phép',
+        approval_status VARCHAR(20) DEFAULT 'approved'
       )
     `);
+
+    // LeaveTypes
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS LeaveTypes (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER REFERENCES Companies(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        UNIQUE(company_id, name)
+      )
+    `);
+
+    // Migration: add submitter_role to LeaveRequests if not exists
+    try {
+      const col = await pool.query(`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name='leaverequests' AND column_name='submitter_role'
+      `);
+      if (col.rows.length === 0) {
+        await pool.query(`ALTER TABLE LeaveRequests ADD COLUMN submitter_role VARCHAR(20) DEFAULT 'employee'`);
+        console.log('Migration: added submitter_role to LeaveRequests');
+      }
+    } catch (e) {
+      console.log('Migration submitter_role skipped:', e.message);
+    }
 
     console.log("PostgreSQL Database schema updated for Multi-tenant SaaS.");
   } catch (error) {

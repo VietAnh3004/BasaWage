@@ -5,6 +5,7 @@ import Sidebar from '../components/Sidebar';
 import CalendarView from '../components/CalendarView';
 import EmployeeManagement from '../components/EmployeeManagement';
 import LeaveManagement from '../components/LeaveManagement';
+import StatisticsView from '../components/StatisticsView';
 import { useAuth } from '../context/AuthContext';
 
 const Stack = createNativeStackNavigator();
@@ -38,6 +39,7 @@ const DashboardLayout = () => {
               <Stack.Screen name="Calendar" component={CalendarView} />
               <Stack.Screen name="Employees" component={EmployeeManagement} />
               <Stack.Screen name="Leave" component={LeaveManagement} />
+              <Stack.Screen name="Statistics" component={StatisticsView} />
             </Stack.Navigator>
           </ScrollView>
         </View>

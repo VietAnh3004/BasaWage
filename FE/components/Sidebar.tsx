@@ -58,6 +58,16 @@ const Sidebar = () => {
           <Ionicons name="calendar-outline" size={18} color={activeTab === 'leave' ? "#fff" : "#888"} />
           <Text style={[styles.menuItemText, activeTab === 'leave' && styles.menuItemTextActive]}>Nghỉ phép</Text>
         </TouchableOpacity>
+
+        {(company.role === 'owner' || company.role === 'manager') && (
+          <TouchableOpacity 
+            style={[styles.menuItem, activeTab === 'statistics' && styles.menuItemActive]}
+            onPress={() => navigation.navigate('Dashboard', { screen: 'Statistics' })}
+          >
+            <Ionicons name="bar-chart-outline" size={18} color={activeTab === 'statistics' ? "#fff" : "#888"} />
+            <Text style={[styles.menuItemText, activeTab === 'statistics' && styles.menuItemTextActive]}>Thống kê</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={styles.footer}>
