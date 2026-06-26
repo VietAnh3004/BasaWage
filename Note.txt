@@ -1,0 +1,6 @@
+Sếp:
+Lịch có 2x2 chế độ hiển thị:
+    *nghỉ phép: hiện tổng quan, ngày chia 2 buổi, mỗi người gắn 1 màu, ai nghỉ buổi nào đánh chấm màu vào ngày đó.
+    *chấm công(chỉ hiện các công bị thiếu):
+        *hiện tổng quan: ai muộn buổi nào chấm buổi đấy
+        *hiện chi tiết: ghi rõ thời gian chấm công của người muộn
