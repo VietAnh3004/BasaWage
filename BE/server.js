@@ -140,6 +140,115 @@ app.post('/api/boss/members/link', async (req, res) => {
   }
 });
 
+// --- DEPARTMENTS API ---
+app.get('/api/boss/departments', async (req, res) => {
+  const { company_id } = req.query;
+  try {
+    const result = await db.query('SELECT * FROM Departments WHERE company_id = $1', [company_id]);
+    res.json({ departments: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/boss/departments', async (req, res) => {
+  const { company_id, name } = req.body;
+  try {
+    const result = await db.query('INSERT INTO Departments (company_id, name) VALUES ($1, $2) RETURNING *', [company_id, name]);
+    res.json({ success: true, department: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- PERSONNEL API ---
+app.get('/api/boss/personnel', async (req, res) => {
+  const { company_id } = req.query;
+  try {
+    const result = await db.query(`
+      SELECT p.*, d.name as department_name, u.email as user_email, u.username as user_username
+      FROM Personnel p
+      LEFT JOIN Departments d ON p.department_id = d.id
+      LEFT JOIN Users u ON p.user_id = u.id
+      WHERE p.company_id = $1
+      ORDER BY p.id DESC
+    `, [company_id]);
+    res.json({ personnel: result.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/boss/personnel', async (req, res) => {
+  const { company_id, name, department_id } = req.body;
+  try {
+    const result = await db.query(
+      'INSERT INTO Personnel (company_id, name, department_id) VALUES ($1, $2, $3) RETURNING *',
+      [company_id, name, department_id || null]
+    );
+    res.json({ success: true, personnel: result.rows[0] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.put('/api/boss/personnel/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, department_id } = req.body;
+  try {
+    await db.query(
+      'UPDATE Personnel SET name = $1, department_id = $2 WHERE id = $3',
+      [name, department_id || null, id]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.delete('/api/boss/personnel/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    await db.query('DELETE FROM Personnel WHERE id = $1', [id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/boss/personnel/connect', async (req, res) => {
+  const { company_id, personnel_id, user_id, enno } = req.body;
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    
+    // Update personnel record
+    await client.query(
+      'UPDATE Personnel SET user_id = $1, enno = $2 WHERE id = $3 AND company_id = $4',
+      [user_id || null, enno || null, personnel_id, company_id]
+    );
+
+    // Sync CompanyMembers linked_enno so attendance logic still works
+    if (user_id) {
+      await client.query(
+        'UPDATE CompanyMembers SET linked_enno = $1 WHERE user_id = $2 AND company_id = $3',
+        [enno || null, user_id, company_id]
+      );
+    }
+    
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
 // --- LEAVE API ---
 app.post('/api/leave', async (req, res) => {
   const { user_id, company_id, date, reason } = req.body;

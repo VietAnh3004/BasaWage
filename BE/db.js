@@ -70,6 +70,27 @@ const initDb = async () => {
       )
     `);
 
+    // Departments
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Departments (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER REFERENCES Companies(id) ON DELETE CASCADE,
+        name TEXT NOT NULL
+      )
+    `);
+
+    // Personnel (Real life employees)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Personnel (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER REFERENCES Companies(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        department_id INTEGER REFERENCES Departments(id) ON DELETE SET NULL,
+        user_id INTEGER REFERENCES Users(id) ON DELETE SET NULL,
+        enno TEXT
+      )
+    `);
+
     // Employees (Imported from device)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS Employees (

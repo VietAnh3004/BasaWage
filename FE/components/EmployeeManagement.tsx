@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, TextInput } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, TextInput, Modal } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 
@@ -7,11 +7,26 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 
 const EmployeeManagement = () => {
   const { user, company } = useAuth();
-  const [members, setMembers] = useState([]);
-  const [machineEmployees, setMachineEmployees] = useState([]);
+  
+  const [viewMode, setViewMode] = useState<'personnel' | 'users' | 'connections'>('personnel');
+  
+  const [members, setMembers] = useState<any[]>([]);
+  const [machineEmployees, setMachineEmployees] = useState<any[]>([]);
+  const [personnel, setPersonnel] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [linkingUserId, setLinkingUserId] = useState(null);
-  const [linkInput, setLinkInput] = useState('');
+
+  // Personnel Form
+  const [showPersonnelModal, setShowPersonnelModal] = useState(false);
+  const [personnelForm, setPersonnelForm] = useState({ id: null, name: '', department_id: null });
+  const [showDeptInput, setShowDeptInput] = useState(false);
+  const [newDeptName, setNewDeptName] = useState('');
+  const [showDeptDropdown, setShowDeptDropdown] = useState(false);
+
+  // Connection Form
+  const [showAddConnection, setShowAddConnection] = useState(false);
+  const [connForm, setConnForm] = useState({ personnel_id: '', user_id: '', enno: '' });
+  const [openDropdown, setOpenDropdown] = useState(''); // 'personnel', 'user', 'enno'
 
   const isOwner = company.role === 'owner';
   const canManage = company.role === 'owner' || company.role === 'manager';
@@ -19,15 +34,22 @@ const EmployeeManagement = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // Fetch members
-      const resMembers = await fetch(`${API_URL}/api/boss/members?company_id=${company.company_id}`);
+      const [resMembers, resMachine, resPersonnel, resDepts] = await Promise.all([
+        fetch(`${API_URL}/api/boss/members?company_id=${company.company_id}`),
+        fetch(`${API_URL}/api/attendance?company_id=${company.company_id}`),
+        fetch(`${API_URL}/api/boss/personnel?company_id=${company.company_id}`),
+        fetch(`${API_URL}/api/boss/departments?company_id=${company.company_id}`)
+      ]);
+      
       const dataMembers = await resMembers.json();
+      const dataMachine = await resMachine.json();
+      const dataPersonnel = await resPersonnel.json();
+      const dataDepts = await resDepts.json();
+      
       if (dataMembers.members) setMembers(dataMembers.members);
-
-      // Fetch machine employees to show in dropdown
-      const resAttendance = await fetch(`${API_URL}/api/attendance?company_id=${company.company_id}`);
-      const dataAttendance = await resAttendance.json();
-      if (dataAttendance.employees) setMachineEmployees(dataAttendance.employees);
+      if (dataMachine.employees) setMachineEmployees(dataMachine.employees);
+      if (dataPersonnel.personnel) setPersonnel(dataPersonnel.personnel);
+      if (dataDepts.departments) setDepartments(dataDepts.departments);
       
     } catch (err) {
       console.error(err);
@@ -39,59 +61,278 @@ const EmployeeManagement = () => {
     fetchData();
   }, []);
 
-  const handleApprove = async (memberId) => {
+  const handleApprove = async (memberId: string) => {
     try {
       await fetch(`${API_URL}/api/boss/members/approve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ company_id: company.company_id, user_id: memberId })
       });
       fetchData();
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
   };
 
-  const handleChangeRole = async (memberId, currentRole) => {
+  const handleChangeRole = async (memberId: string, currentRole: string) => {
     if (!isOwner) return;
     const newRole = currentRole === 'employee' ? 'manager' : 'employee';
     try {
       await fetch(`${API_URL}/api/boss/members/role`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ company_id: company.company_id, user_id: memberId, role: newRole })
       });
       fetchData();
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (err) { console.error(err); }
   };
 
-  const handleLinkEnNo = async (memberId, enNo) => {
+  const handleAddDept = async () => {
+    if (!newDeptName.trim()) return;
     try {
-      await fetch(`${API_URL}/api/boss/members/link`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: company.company_id, user_id: memberId, linked_enno: enNo })
+      const res = await fetch(`${API_URL}/api/boss/departments`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: company.company_id, name: newDeptName.trim() })
       });
-      setLinkingUserId(null);
-      setLinkInput('');
+      const data = await res.json();
+      if (data.success) {
+        setDepartments([...departments, data.department]);
+        setPersonnelForm({...personnelForm, department_id: data.department.id});
+        setShowDeptInput(false);
+        setNewDeptName('');
+      }
+    } catch (e) { console.error(e); }
+  };
+
+  const handleSavePersonnel = async () => {
+    if (!personnelForm.name.trim()) return;
+    try {
+      const url = personnelForm.id 
+        ? `${API_URL}/api/boss/personnel/${personnelForm.id}`
+        : `${API_URL}/api/boss/personnel`;
+      const method = personnelForm.id ? 'PUT' : 'POST';
+      
+      await fetch(url, {
+        method, headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: company.company_id, name: personnelForm.name, department_id: personnelForm.department_id })
+      });
+      setShowPersonnelModal(false);
       fetchData();
-    } catch (err) {
-      console.error(err);
-    }
+    } catch (e) { console.error(e); }
+  };
+
+  const handleDeletePersonnel = async (id: string) => {
+    try {
+      await fetch(`${API_URL}/api/boss/personnel/${id}`, { method: 'DELETE' });
+      fetchData();
+    } catch (e) { console.error(e); }
+  };
+
+  const handleSaveConnection = async () => {
+    if (!connForm.personnel_id) return alert('Vui lòng chọn nhân sự');
+    try {
+      await fetch(`${API_URL}/api/boss/personnel/connect`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          company_id: company.company_id, 
+          personnel_id: connForm.personnel_id, 
+          user_id: connForm.user_id || null, 
+          enno: connForm.enno || null 
+        })
+      });
+      setShowAddConnection(false);
+      setConnForm({ personnel_id: '', user_id: '', enno: '' });
+      fetchData();
+    } catch (e) { console.error(e); }
   };
 
   if (loading) {
     return <ActivityIndicator size="large" color="#4a72b5" style={{marginTop: 50}} />;
   }
 
+  const renderPersonnelView = () => (
+    <View style={styles.table}>
+      <View style={styles.tableHeader}>
+        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Họ và tên</Text>
+        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Bộ phận</Text>
+        <Text style={[styles.cell, {flex: 1, textAlign: 'center', fontWeight: 'bold'}]}>Hành động</Text>
+      </View>
+      {personnel.map(p => (
+        <View key={p.id} style={styles.tableRow}>
+          <Text style={[styles.cell, {flex: 2}]}>{p.name}</Text>
+          <Text style={[styles.cell, {flex: 2}]}>{p.department_name || '-'}</Text>
+          <View style={{flex: 1, flexDirection: 'row', justifyContent: 'center'}}>
+            {canManage && (
+              <>
+                <TouchableOpacity onPress={() => { setPersonnelForm({id: p.id, name: p.name, department_id: p.department_id}); setShowPersonnelModal(true); }} style={{marginRight: 10}}>
+                  <Ionicons name="pencil" size={18} color="#4a72b5" />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => handleDeletePersonnel(p.id)}>
+                  <Ionicons name="trash" size={18} color="#f28baf" />
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        </View>
+      ))}
+      {canManage && (
+        <TouchableOpacity style={styles.addBtnRow} onPress={() => { setPersonnelForm({id: null, name: '', department_id: null}); setShowPersonnelModal(true); }}>
+          <Ionicons name="add-circle" size={20} color="#4a72b5" />
+          <Text style={{color: '#4a72b5', fontWeight: 'bold', marginLeft: 5}}>Thêm nhân sự mới</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+
+  const renderUsersView = () => (
+    <View style={styles.table}>
+      <View style={styles.tableHeader}>
+        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Email / Tài khoản</Text>
+        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Tên nhân viên</Text>
+        <Text style={[styles.cell, {flex: 1, fontWeight: 'bold'}]}>Vai trò</Text>
+        <Text style={[styles.cell, {flex: 1, fontWeight: 'bold'}]}>Trạng thái</Text>
+        <Text style={[styles.cell, {flex: 2, textAlign: 'center', fontWeight: 'bold'}]}>Hành động</Text>
+      </View>
+      {members.map(m => (
+        <View key={m.user_id} style={styles.tableRow}>
+          <Text style={[styles.cell, {flex: 2}]}>{m.user_email || 'N/A'} {m.user_id === user.id ? '(Bạn)' : ''}</Text>
+          <Text style={[styles.cell, {flex: 2}]}>{m.username}</Text>
+          <View style={{flex: 1}}>
+            <View style={[styles.badge, m.role === 'owner' ? styles.badgeOwner : m.role === 'manager' ? styles.badgeManager : styles.badgeEmployee]}>
+              <Text style={styles.badgeText}>{m.role}</Text>
+            </View>
+          </View>
+          <View style={{flex: 1}}>
+            <Text style={{color: m.status === 'active' ? '#4a72b5' : '#ffa500', fontWeight: 'bold'}}>
+              {m.status === 'active' ? 'Đã duyệt' : 'Chờ duyệt'}
+            </Text>
+          </View>
+          <View style={{flex: 2, flexDirection: 'row', justifyContent: 'center'}}>
+            {m.status === 'pending' && (
+              <TouchableOpacity style={styles.actionBtn} onPress={() => handleApprove(m.user_id)}>
+                <Text style={styles.actionText}>Duyệt</Text>
+              </TouchableOpacity>
+            )}
+            {isOwner && m.role !== 'owner' && m.status === 'active' && (
+              <TouchableOpacity style={[styles.actionBtn, {backgroundColor: '#eee'}]} onPress={() => handleChangeRole(m.user_id, m.role)}>
+                <Text style={[styles.actionText, {color: '#555'}]}>{m.role === 'employee' ? 'Lên quản lý' : 'Hạ xuống NV'}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+
+  const renderConnectionsView = () => (
+    <View style={styles.table}>
+      <View style={styles.tableHeader}>
+        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Tên nhân sự</Text>
+        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Tài khoản NV</Text>
+        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Mã máy chấm công</Text>
+        <Text style={[styles.cell, {flex: 1, textAlign: 'center', fontWeight: 'bold'}]}>Lưu</Text>
+      </View>
+      
+      {showAddConnection && (
+        <View style={[styles.tableRow, {backgroundColor: '#f5f8fd', zIndex: 999}]}>
+          {/* Personnel Dropdown */}
+          <View style={{flex: 2, position: 'relative', paddingRight: 10}}>
+            <TouchableOpacity style={styles.dropdownBtn} onPress={() => setOpenDropdown(openDropdown === 'personnel' ? '' : 'personnel')}>
+              <Text numberOfLines={1}>{personnel.find(p => p.id === connForm.personnel_id)?.name || 'Chọn nhân sự...'}</Text>
+              <Ionicons name="chevron-down" size={14} />
+            </TouchableOpacity>
+            {openDropdown === 'personnel' && (
+              <ScrollView style={styles.dropdownList}>
+                {personnel.map(p => (
+                  <TouchableOpacity key={p.id} style={styles.dropdownItem} onPress={() => { setConnForm({...connForm, personnel_id: p.id}); setOpenDropdown(''); }}>
+                    <Text>{p.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+          
+          {/* User Account Dropdown */}
+          <View style={{flex: 2, position: 'relative', paddingRight: 10}}>
+            <TouchableOpacity style={styles.dropdownBtn} onPress={() => setOpenDropdown(openDropdown === 'user' ? '' : 'user')}>
+              <Text numberOfLines={1}>{members.find(m => m.user_id === connForm.user_id)?.username || 'Chọn tài khoản...'}</Text>
+              <Ionicons name="chevron-down" size={14} />
+            </TouchableOpacity>
+            {openDropdown === 'user' && (
+              <ScrollView style={styles.dropdownList}>
+                <TouchableOpacity style={styles.dropdownItem} onPress={() => { setConnForm({...connForm, user_id: ''}); setOpenDropdown(''); }}>
+                  <Text style={{color: '#888', fontStyle: 'italic'}}>Bỏ trống</Text>
+                </TouchableOpacity>
+                {members.map(m => (
+                  <TouchableOpacity key={m.user_id} style={styles.dropdownItem} onPress={() => { setConnForm({...connForm, user_id: m.user_id}); setOpenDropdown(''); }}>
+                    <Text>{m.username} ({m.user_email || 'N/A'})</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+          
+          {/* Timeclock Dropdown */}
+          <View style={{flex: 2, position: 'relative', paddingRight: 10}}>
+            <TouchableOpacity style={styles.dropdownBtn} onPress={() => setOpenDropdown(openDropdown === 'enno' ? '' : 'enno')}>
+              <Text numberOfLines={1}>{machineEmployees.find(m => m.enNo === connForm.enno)?.name ? `${connForm.enno} - ${machineEmployees.find(m => m.enNo === connForm.enno)?.name}` : 'Chọn ID máy...'}</Text>
+              <Ionicons name="chevron-down" size={14} />
+            </TouchableOpacity>
+            {openDropdown === 'enno' && (
+              <ScrollView style={styles.dropdownList}>
+                <TouchableOpacity style={styles.dropdownItem} onPress={() => { setConnForm({...connForm, enno: ''}); setOpenDropdown(''); }}>
+                  <Text style={{color: '#888', fontStyle: 'italic'}}>Bỏ trống</Text>
+                </TouchableOpacity>
+                {machineEmployees.map(m => (
+                  <TouchableOpacity key={m.enNo} style={styles.dropdownItem} onPress={() => { setConnForm({...connForm, enno: m.enNo}); setOpenDropdown(''); }}>
+                    <Text>{m.enNo} - {m.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+          
+          <View style={{flex: 1, flexDirection: 'row', justifyContent: 'center'}}>
+            <TouchableOpacity style={styles.saveBtn} onPress={handleSaveConnection}>
+              <Ionicons name="checkmark" size={18} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.cancelBtn} onPress={() => { setShowAddConnection(false); setOpenDropdown(''); }}>
+              <Ionicons name="close" size={18} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {!showAddConnection && canManage && (
+        <TouchableOpacity style={styles.addBtnRow} onPress={() => setShowAddConnection(true)}>
+          <Ionicons name="add-circle" size={20} color="#4a72b5" />
+          <Text style={{color: '#4a72b5', fontWeight: 'bold', marginLeft: 5}}>Kết nối mới</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Existing connections */}
+      {personnel.filter(p => p.user_id || p.enno).map(p => (
+        <View key={p.id} style={styles.tableRow}>
+          <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>{p.name}</Text>
+          <Text style={[styles.cell, {flex: 2}]}>{p.user_username ? `${p.user_username} (${p.user_email || 'N/A'})` : '-'}</Text>
+          <Text style={[styles.cell, {flex: 2}]}>
+            {p.enno ? `${p.enno} - ${machineEmployees.find(m => m.enNo === p.enno)?.name || '?'}` : '-'}
+          </Text>
+          <View style={{flex: 1, alignItems: 'center'}}>
+            <TouchableOpacity onPress={() => {
+              setConnForm({ personnel_id: p.id, user_id: p.user_id || '', enno: p.enno || '' });
+              setShowAddConnection(true);
+            }}>
+              <Ionicons name="pencil" size={16} color="#888" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Quản lý Nhân viên</Text>
-          <Text style={styles.subtitle}>Danh sách thành viên trong công ty</Text>
+          <Text style={styles.subtitle}>Tổ chức và liên kết nhân sự, tài khoản</Text>
         </View>
         <TouchableOpacity 
           style={{backgroundColor: '#e2ecd2', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#c4d7a8'}}
@@ -108,93 +349,87 @@ const EmployeeManagement = () => {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.table}>
-        <View style={styles.tableHeader}>
-          <Text style={[styles.cell, {flex: 2}]}>Username</Text>
-          <Text style={[styles.cell, {flex: 1}]}>Vai trò</Text>
-          <Text style={[styles.cell, {flex: 1}]}>Trạng thái</Text>
-          <Text style={[styles.cell, {flex: 2}]}>Mã Máy Chấm Công</Text>
-          <Text style={[styles.cell, {flex: 2, textAlign: 'center'}]}>Hành động</Text>
-        </View>
+      {/* Tabs */}
+      <View style={styles.tabsContainer}>
+        <TouchableOpacity style={[styles.tabBtn, viewMode === 'personnel' && styles.tabBtnActive]} onPress={() => setViewMode('personnel')}>
+          <Text style={[styles.tabText, viewMode === 'personnel' && styles.tabTextActive]}>Danh sách nhân sự</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.tabBtn, viewMode === 'users' && styles.tabBtnActive]} onPress={() => setViewMode('users')}>
+          <Text style={[styles.tabText, viewMode === 'users' && styles.tabTextActive]}>Tài khoản NV</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.tabBtn, viewMode === 'connections' && styles.tabBtnActive]} onPress={() => setViewMode('connections')}>
+          <Text style={[styles.tabText, viewMode === 'connections' && styles.tabTextActive]}>Kết nối</Text>
+        </TouchableOpacity>
+      </View>
 
-        {members.map((m, index) => (
-          <View key={m.user_id} style={[styles.tableRow, { zIndex: linkingUserId === m.user_id ? 1000 : 1 }]}>
-            <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>{m.username} {m.user_id === user.id ? '(Bạn)' : ''}</Text>
+      {viewMode === 'personnel' && renderPersonnelView()}
+      {viewMode === 'users' && renderUsersView()}
+      {viewMode === 'connections' && renderConnectionsView()}
+
+      {/* Modal for adding/editing Personnel */}
+      <Modal visible={showPersonnelModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>{personnelForm.id ? 'Sửa nhân sự' : 'Thêm nhân sự mới'}</Text>
             
-            <View style={{flex: 1}}>
-              <View style={[styles.badge, m.role === 'owner' ? styles.badgeOwner : m.role === 'manager' ? styles.badgeManager : styles.badgeEmployee]}>
-                <Text style={styles.badgeText}>{m.role}</Text>
-              </View>
-            </View>
+            <Text style={styles.label}>Họ và tên</Text>
+            <TextInput 
+              style={styles.modalInput} 
+              value={personnelForm.name} 
+              onChangeText={t => setPersonnelForm({...personnelForm, name: t})}
+              placeholder="Nhập họ và tên..."
+            />
 
-            <View style={{flex: 1}}>
-              <Text style={{color: m.status === 'active' ? '#4a72b5' : '#ffa500', fontWeight: 'bold'}}>
-                {m.status === 'active' ? 'Đã duyệt' : 'Chờ duyệt'}
-              </Text>
-            </View>
-
-            <View style={{flex: 2}}>
-              {linkingUserId === m.user_id ? (
-                <View style={styles.linkContainer}>
-                  <TextInput 
-                    style={styles.input} 
-                    value={linkInput} 
-                    onChangeText={setLinkInput}
-                    placeholder="Nhập ID..."
-                  />
-                  <TouchableOpacity style={styles.saveBtn} onPress={() => handleLinkEnNo(m.user_id, linkInput)}>
-                    <Ionicons name="checkmark" size={16} color="#fff" />
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.cancelBtn} onPress={() => setLinkingUserId(null)}>
-                    <Ionicons name="close" size={16} color="#fff" />
-                  </TouchableOpacity>
-                  
-                  {/* Dropdown for quick select */}
-                  {machineEmployees.length > 0 && (
-                    <View style={styles.dropdown}>
-                      <Text style={{fontSize: 10, color: '#888', marginBottom: 5}}>Hoặc chọn từ máy:</Text>
-                      <ScrollView style={{maxHeight: 100}}>
-                        {machineEmployees.map(me => (
-                          <TouchableOpacity key={me.enNo} style={styles.dropdownItem} onPress={() => setLinkInput(me.enNo)}>
-                            <Text style={{fontSize: 12}}>{me.enNo} - {me.name}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </ScrollView>
-                    </View>
-                  )}
-                </View>
-              ) : (
-                <View style={{flexDirection: 'row', alignItems: 'center'}}>
-                  <Text style={{marginRight: 10, color: m.linked_enno ? '#333' : '#aaa'}}>
-                    {m.linked_enno || 'Chưa gán'}
-                  </Text>
-                  {canManage && (
-                    <TouchableOpacity onPress={() => { setLinkingUserId(m.user_id); setLinkInput(m.linked_enno || ''); }}>
-                      <Ionicons name="pencil" size={16} color="#4a72b5" />
-                    </TouchableOpacity>
-                  )}
-                </View>
-              )}
-            </View>
-
-            <View style={{flex: 2, flexDirection: 'row', justifyContent: 'center'}}>
-              {m.status === 'pending' && (
-                <TouchableOpacity style={styles.actionBtn} onPress={() => handleApprove(m.user_id)}>
-                  <Text style={styles.actionText}>Duyệt</Text>
-                </TouchableOpacity>
-              )}
+            <Text style={styles.label}>Bộ phận</Text>
+            <View style={{position: 'relative', zIndex: 100}}>
+              <TouchableOpacity style={styles.modalInput} onPress={() => setShowDeptDropdown(!showDeptDropdown)}>
+                <Text>{departments.find(d => d.id === personnelForm.department_id)?.name || 'Chọn bộ phận...'}</Text>
+                <Ionicons name="chevron-down" size={16} style={{position: 'absolute', right: 10, top: 12}} />
+              </TouchableOpacity>
               
-              {isOwner && m.role !== 'owner' && m.status === 'active' && (
-                <TouchableOpacity style={[styles.actionBtn, {backgroundColor: '#eee'}]} onPress={() => handleChangeRole(m.user_id, m.role)}>
-                  <Text style={[styles.actionText, {color: '#555'}]}>
-                    {m.role === 'employee' ? 'Lên làm Sếp' : 'Hạ xuống NV'}
-                  </Text>
-                </TouchableOpacity>
+              {showDeptDropdown && (
+                <View style={styles.deptDropdown}>
+                  <ScrollView style={{maxHeight: 150}}>
+                    {departments.map(d => (
+                      <TouchableOpacity key={d.id} style={styles.deptDropdownItem} onPress={() => { setPersonnelForm({...personnelForm, department_id: d.id}); setShowDeptDropdown(false); }}>
+                        <Text>{d.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                    <TouchableOpacity style={styles.deptDropdownAddBtn} onPress={() => { setShowDeptInput(true); setShowDeptDropdown(false); }}>
+                      <Ionicons name="add" size={16} color="#4a72b5" />
+                      <Text style={{color: '#4a72b5', fontWeight: 'bold'}}>Thêm bộ phận mới</Text>
+                    </TouchableOpacity>
+                  </ScrollView>
+                </View>
               )}
+            </View>
+
+            {showDeptInput && (
+              <View style={{flexDirection: 'row', marginTop: 10, zIndex: 1}}>
+                <TextInput 
+                  style={[styles.modalInput, {flex: 1, marginBottom: 0}]} 
+                  value={newDeptName} 
+                  onChangeText={setNewDeptName}
+                  placeholder="Nhập tên bộ phận..."
+                />
+                <TouchableOpacity style={styles.addDeptBtn} onPress={handleAddDept}>
+                  <Text style={{color: '#fff'}}>Thêm</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowPersonnelModal(false)}>
+                <Text style={{color: '#555'}}>Hủy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalSaveBtn} onPress={handleSavePersonnel}>
+                <Text style={{color: '#fff', fontWeight: 'bold'}}>Lưu</Text>
+              </TouchableOpacity>
             </View>
           </View>
-        ))}
-      </View>
+        </View>
+      </Modal>
+
     </View>
   );
 };
@@ -217,6 +452,30 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 14,
     color: '#666',
+  },
+  tabsContainer: {
+    flexDirection: 'row',
+    marginBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  tabBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tabBtnActive: {
+    borderBottomColor: '#4a72b5',
+  },
+  tabText: {
+    fontSize: 15,
+    color: '#666',
+    fontWeight: '500',
+  },
+  tabTextActive: {
+    color: '#4a72b5',
+    fontWeight: 'bold',
   },
   table: {
     backgroundColor: '#fff',
@@ -277,55 +536,134 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 12,
   },
-  linkContainer: {
+  addBtnRow: {
     flexDirection: 'row',
+    padding: 15,
     alignItems: 'center',
-    position: 'relative',
-    zIndex: 10,
+    justifyContent: 'center',
+    backgroundColor: '#f9fbff',
   },
-  input: {
+  dropdownBtn: {
     borderWidth: 1,
     borderColor: '#ddd',
     borderRadius: 4,
-    padding: 4,
-    width: 80,
-    fontSize: 12,
-    marginRight: 5,
+    padding: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     backgroundColor: '#fff',
   },
+  dropdownList: {
+    position: 'absolute',
+    top: 40,
+    left: 0,
+    right: 10,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 4,
+    maxHeight: 150,
+    zIndex: 1000,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 5,
+  },
+  dropdownItem: {
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
   saveBtn: {
-    backgroundColor: '#4a72b5',
-    padding: 6,
+    backgroundColor: '#4caf50',
+    padding: 8,
     borderRadius: 4,
     marginRight: 5,
   },
   cancelBtn: {
     backgroundColor: '#f28baf',
-    padding: 6,
+    padding: 8,
     borderRadius: 4,
   },
-  dropdown: {
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    width: 400,
+    borderRadius: 12,
+    padding: 24,
+    elevation: 10,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 20,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#555',
+    marginBottom: 8,
+    marginTop: 10,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 6,
+    padding: 12,
+    fontSize: 14,
+    backgroundColor: '#f9f9f9',
+  },
+  deptDropdown: {
     position: 'absolute',
-    top: '100%',
+    top: 50,
     left: 0,
-    width: 180,
+    right: 0,
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#ddd',
-    borderRadius: 8,
-    padding: 8,
-    marginTop: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
+    borderRadius: 6,
     elevation: 5,
-    zIndex: 9999,
+    zIndex: 1000,
   },
-  dropdownItem: {
-    paddingVertical: 5,
+  deptDropdownItem: {
+    padding: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: '#f0f0f0',
+  },
+  deptDropdownAddBtn: {
+    flexDirection: 'row',
+    padding: 12,
+    alignItems: 'center',
+    backgroundColor: '#f5f8fd',
+  },
+  addDeptBtn: {
+    backgroundColor: '#4a72b5',
+    paddingHorizontal: 15,
+    justifyContent: 'center',
+    borderRadius: 6,
+    marginLeft: 10,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 30,
+    zIndex: 1,
+  },
+  modalCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    marginRight: 10,
+  },
+  modalSaveBtn: {
+    backgroundColor: '#4a72b5',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 6,
   }
 });
 
