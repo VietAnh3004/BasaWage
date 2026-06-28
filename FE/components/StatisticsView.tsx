@@ -25,6 +25,15 @@ const StatisticsView = () => {
   const ITEMS_PER_PAGE = 12;
   const [currentPage, setCurrentPage] = useState(1);
 
+  const timeToSeconds = (timeStr: string) => {
+    if (!timeStr) return 0;
+    const [h, m, s] = timeStr.split(':').map(Number);
+    return (h || 0) * 3600 + (m || 0) * 60 + (s || 0);
+  };
+
+  const workStartSeconds = timeToSeconds(company.work_start_time || '09:00:00');
+  const workEndSeconds = timeToSeconds(company.work_end_time || '18:00:00');
+
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -82,12 +91,6 @@ const StatisticsView = () => {
     return true;
   });
 
-  const timeToSeconds = (timeStr: string) => {
-    if (!timeStr) return 0;
-    const [h, m, s] = timeStr.split(':').map(Number);
-    return (h || 0) * 3600 + (m || 0) * 60 + (s || 0);
-  };
-
   const getStats = () => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
@@ -96,7 +99,7 @@ const StatisticsView = () => {
     const now = new Date();
     const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
-    const daysToCount = [];
+    const daysToCount: string[] = [];
     for (let d = 1; d <= daysInMonth; d++) {
       const dateObj = new Date(year, month, d);
       const dayOfWeek = dateObj.getDay();
@@ -128,8 +131,8 @@ const StatisticsView = () => {
         if (hasLeave) {
           leave++;
         } else if (log) {
-          if (timeToSeconds(log.firstCheckIn) > 9 * 3600) late++;
-          if (timeToSeconds(log.lastCheckOut) < 18 * 3600) early++;
+          if (timeToSeconds(log.firstCheckIn) > workStartSeconds) late++;
+          if (timeToSeconds(log.lastCheckOut) < workEndSeconds) early++;
         } else {
           // If no log and no leave, it might be an absence.
           // Only count absence if:

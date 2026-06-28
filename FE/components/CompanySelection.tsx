@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 
 const CompanySelection = () => {
-  const { user, updateCompany, logout } = useAuth();
+  const { user, applyServerState, logout } = useAuth();
   const [view, setView] = useState('menu'); // 'menu', 'create', 'join'
   const [companyName, setCompanyName] = useState('');
   const [joinCode, setJoinCode] = useState('');
@@ -27,7 +27,7 @@ const CompanySelection = () => {
       });
       const data = await res.json();
       if (data.success) {
-        updateCompany(data.company);
+        applyServerState(data);
       } else {
         setError('Có lỗi xảy ra');
       }
@@ -62,10 +62,9 @@ const CompanySelection = () => {
       });
       
       if (joinRes.ok) {
-        // Update local state to show pending
+        const joinData = await joinRes.json();
         alert('Đã gửi yêu cầu gia nhập! Vui lòng chờ Sếp duyệt.');
-        // We can mock a pending company object to show the waiting screen
-        updateCompany({ id: searchData.company.id, name: searchData.company.name, role: 'employee', status: 'pending' });
+        applyServerState(joinData);
       } else {
         setError('Có lỗi xảy ra');
       }

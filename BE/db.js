@@ -25,7 +25,8 @@ const initDb = async () => {
         id SERIAL PRIMARY KEY,
         email TEXT UNIQUE NOT NULL,
         username TEXT,
-        password TEXT NOT NULL
+        password TEXT NOT NULL,
+        selected_company_id INTEGER
       )
     `);
 
@@ -53,7 +54,18 @@ const initDb = async () => {
       CREATE TABLE IF NOT EXISTS Companies (
         id SERIAL PRIMARY KEY,
         name TEXT NOT NULL,
-        join_code TEXT UNIQUE NOT NULL
+        join_code TEXT UNIQUE NOT NULL,
+        work_start_time TEXT DEFAULT '09:00:00',
+        work_end_time TEXT DEFAULT '18:00:00',
+        max_leave_days INTEGER DEFAULT 12
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS Sessions (
+        token TEXT PRIMARY KEY,
+        user_id INTEGER REFERENCES Users(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT NOW()
       )
     `);
 
@@ -143,6 +155,19 @@ const initDb = async () => {
 
     // Migration: add submitter_role to LeaveRequests if not exists
     try {
+      await pool.query(`ALTER TABLE Users ADD COLUMN IF NOT EXISTS selected_company_id INTEGER`);
+      await pool.query(`ALTER TABLE Companies ADD COLUMN IF NOT EXISTS work_start_time TEXT DEFAULT '09:00:00'`);
+      await pool.query(`ALTER TABLE Companies ADD COLUMN IF NOT EXISTS work_end_time TEXT DEFAULT '18:00:00'`);
+      await pool.query(`ALTER TABLE Companies ADD COLUMN IF NOT EXISTS max_leave_days INTEGER DEFAULT 12`);
+      await pool.query(`ALTER TABLE Personnel ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active'`);
+      await pool.query(`ALTER TABLE LeaveRequests ADD COLUMN IF NOT EXISTS leave_type VARCHAR(100) DEFAULT 'Nghỉ phép'`);
+      await pool.query(`ALTER TABLE LeaveRequests ADD COLUMN IF NOT EXISTS approval_status VARCHAR(20) DEFAULT 'approved'`);
+      const legacyAnnualLeave = 'Ngh\u00e1\u00bb\u2030 ph\u00c3\u00a9p';
+      const legacyBusinessTrip = 'C\u00c3\u00b4ng t\u00c3\u00a1c';
+      await pool.query(`UPDATE LeaveRequests SET leave_type = $1 WHERE leave_type = $2`, ['Nghỉ phép', legacyAnnualLeave]);
+      await pool.query(`UPDATE LeaveTypes SET name = $1 WHERE name = $2`, ['Nghỉ phép', legacyAnnualLeave]);
+      await pool.query(`UPDATE LeaveTypes SET name = $1 WHERE name = $2`, ['Công tác', legacyBusinessTrip]);
+
       const col = await pool.query(`
         SELECT column_name FROM information_schema.columns
         WHERE table_name='leaverequests' AND column_name='submitter_role'

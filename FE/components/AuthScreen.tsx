@@ -39,7 +39,7 @@ const AuthScreen = () => {
       }
       
       if (isLogin) {
-        login(data.user);
+        await login(data);
       } else {
         // Switch to login after register
         setIsLogin(true);

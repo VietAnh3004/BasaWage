@@ -1,6 +1,8 @@
-Sếp:
-Lịch có 2x2 chế độ hiển thị:
-    *nghỉ phép: hiện tổng quan, ngày chia 2 buổi, mỗi người gắn 1 màu, ai nghỉ buổi nào đánh chấm màu vào ngày đó.
-    *chấm công(chỉ hiện các công bị thiếu):
-        *hiện tổng quan: ai muộn buổi nào chấm buổi đấy
-        *hiện chi tiết: ghi rõ thời gian chấm công của người muộn
+theo dõi quỹ ngày nghỉ phép.
+List người có trên máy chấm công nhưng chưa có thông tin nhân sự (Hãy cảnh báo).
+Lấy mã mời ->
+Đổi màu số dễ nhìn hơn
+Sếp tổng cũng xin nghỉ phép để nhân viên biết.
+them nút tùy chỉnh giờ hành chính.
+Làm thông báo (qua mail).
+*Xin nghỉ phải xin muộn nhất từ 9h tối hôm trước* (có thể để sếp setup)

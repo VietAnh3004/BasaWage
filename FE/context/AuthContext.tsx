@@ -1,24 +1,45 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ActivityIndicator, View } from 'react-native';
+
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
+const SESSION_KEY = 'sessionToken';
 
 export const AuthContext = createContext<any>(null);
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<any>(null);
   const [company, setCompany] = useState<any>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Khôi phục trạng thái đăng nhập từ Storage khi load ứng dụng
+  const applyServerState = (state: any) => {
+    setUser(state.user || null);
+    setCompany(state.company || null);
+  };
+
+  const fetchSession = async (sessionToken: string) => {
+    const res = await fetch(`${API_URL}/api/session`, {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    });
+    if (!res.ok) throw new Error('Invalid session');
+    const data = await res.json();
+    applyServerState(data);
+  };
+
   useEffect(() => {
     const loadState = async () => {
       try {
-        const storedUser = await AsyncStorage.getItem('user');
-        const storedCompany = await AsyncStorage.getItem('company');
-        if (storedUser) setUser(JSON.parse(storedUser));
-        if (storedCompany) setCompany(JSON.parse(storedCompany));
+        const storedToken = await AsyncStorage.getItem(SESSION_KEY);
+        if (storedToken) {
+          setToken(storedToken);
+          await fetchSession(storedToken);
+        }
       } catch (e) {
-        console.error("Failed to load auth state", e);
+        await AsyncStorage.removeItem(SESSION_KEY);
+        setToken(null);
+        setUser(null);
+        setCompany(null);
       } finally {
         setLoading(false);
       }
@@ -26,32 +47,49 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     loadState();
   }, []);
 
-  const login = async (userData: any) => {
-    setUser(userData);
-    await AsyncStorage.setItem('user', JSON.stringify(userData));
-
-    if (userData.memberships && userData.memberships.length > 0) {
-      setCompany(userData.memberships[0]);
-      await AsyncStorage.setItem('company', JSON.stringify(userData.memberships[0]));
-    } else {
-      setCompany(null);
-      await AsyncStorage.removeItem('company');
-    }
+  const login = async (data: any) => {
+    if (!data.token) throw new Error('Missing session token');
+    setToken(data.token);
+    await AsyncStorage.setItem(SESSION_KEY, data.token);
+    applyServerState(data);
   };
 
   const logout = async () => {
+    const currentToken = token;
+    setToken(null);
     setUser(null);
     setCompany(null);
-    await AsyncStorage.removeItem('user');
-    await AsyncStorage.removeItem('company');
+    await AsyncStorage.removeItem(SESSION_KEY);
+
+    if (currentToken) {
+      fetch(`${API_URL}/api/session`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${currentToken}` },
+      }).catch(() => undefined);
+    }
+  };
+
+  const refreshSession = async () => {
+    if (!token) return;
+    await fetchSession(token);
   };
 
   const updateCompany = async (companyData: any) => {
-    setCompany(companyData);
-    await AsyncStorage.setItem('company', JSON.stringify(companyData));
+    if (!user?.id || !companyData?.company_id) {
+      setCompany(companyData || null);
+      return;
+    }
+
+    const res = await fetch(`${API_URL}/api/users/selected-company`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: user.id, company_id: companyData.company_id }),
+    });
+    if (!res.ok) throw new Error('Could not update selected company');
+    const data = await res.json();
+    applyServerState(data);
   };
 
-  // Tránh render quá sớm khi chưa load xong storage
   if (loading) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -61,7 +99,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }
 
   return (
-    <AuthContext.Provider value={{ user, company, login, logout, updateCompany }}>
+    <AuthContext.Provider value={{ user, company, token, login, logout, refreshSession, updateCompany, applyServerState }}>
       {children}
     </AuthContext.Provider>
   );

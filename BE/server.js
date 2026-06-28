@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs');
+const crypto = require('crypto');
 const db = require('./db');
 
 const app = express();
@@ -11,11 +12,74 @@ app.use(express.json());
 
 const upload = multer({ dest: 'uploads/' });
 
+const getMemberships = async (userId) => {
+  const result = await db.query(`
+    SELECT cm.company_id, c.name as company_name, c.join_code, c.work_start_time, c.work_end_time,
+           c.max_leave_days, cm.role, cm.status, cm.linked_enno
+    FROM CompanyMembers cm
+    JOIN Companies c ON c.id = cm.company_id
+    WHERE cm.user_id = $1
+    ORDER BY cm.id ASC
+  `, [userId]);
+  return result.rows;
+};
+
+const buildUserState = async (userId) => {
+  const result = await db.query('SELECT id, email, username, selected_company_id FROM Users WHERE id = $1', [userId]);
+  if (result.rows.length === 0) return null;
+
+  const user = result.rows[0];
+  const memberships = await getMemberships(user.id);
+  const selectedCompany = memberships.find(m => m.company_id === user.selected_company_id) || memberships[0] || null;
+
+  return {
+    user: {
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      memberships,
+    },
+    company: selectedCompany,
+  };
+};
+
+const createSession = async (userId) => {
+  const token = crypto.randomUUID();
+  await db.query('INSERT INTO Sessions (token, user_id) VALUES ($1, $2)', [token, userId]);
+  return token;
+};
+
+const hashPassword = (password) => {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+  return `pbkdf2$${salt}$${hash}`;
+};
+
+const verifyPassword = (password, storedPassword) => {
+  if (!storedPassword?.startsWith('pbkdf2$')) {
+    return password === storedPassword;
+  }
+
+  const [, salt, hash] = storedPassword.split('$');
+  if (!salt || !hash) return false;
+  const candidate = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
+  const candidateBuffer = Buffer.from(candidate, 'hex');
+  const storedBuffer = Buffer.from(hash, 'hex');
+  if (candidateBuffer.length !== storedBuffer.length) return false;
+  return crypto.timingSafeEqual(candidateBuffer, storedBuffer);
+};
+
+const getBearerToken = (req) => {
+  const header = req.headers.authorization || '';
+  return header.startsWith('Bearer ') ? header.slice(7) : null;
+};
+
 // --- AUTH API ---
 app.post('/api/register', async (req, res) => {
   const { email, username, password } = req.body;
+  if (!email || !username || !password) return res.status(400).json({ error: 'Missing required fields' });
   try {
-    const result = await db.query('INSERT INTO Users (email, username, password) VALUES ($1, $2, $3) RETURNING id, email, username', [email, username, password]);
+    const result = await db.query('INSERT INTO Users (email, username, password) VALUES ($1, $2, $3) RETURNING id, email, username', [email, username, hashPassword(password)]);
     res.json({ success: true, user: result.rows[0] });
   } catch (err) {
     if (err.code === '23505') return res.status(400).json({ error: 'Email already exists' });
@@ -26,24 +90,57 @@ app.post('/api/register', async (req, res) => {
 
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: 'Missing email or password' });
   try {
-    const result = await db.query('SELECT * FROM Users WHERE email = $1 AND password = $2', [email, password]);
+    const result = await db.query('SELECT * FROM Users WHERE email = $1', [email]);
     if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
-    
-    const user = result.rows[0];
-    // Find if user is in any company
-    const members = await db.query(`
-      SELECT cm.company_id, c.name as company_name, c.join_code, cm.role, cm.status, cm.linked_enno 
-      FROM CompanyMembers cm 
-      JOIN Companies c ON c.id = cm.company_id 
-      WHERE cm.user_id = $1
-    `, [user.id]);
 
-    res.json({ success: true, user: { id: user.id, email: user.email, username: user.username, memberships: members.rows } });
+    const user = result.rows[0];
+    if (!verifyPassword(password, user.password)) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    if (!user.password.startsWith('pbkdf2$')) {
+      await db.query('UPDATE Users SET password = $1 WHERE id = $2', [hashPassword(password), user.id]);
+    }
+
+    const token = await createSession(user.id);
+    const state = await buildUserState(user.id);
+
+    res.json({ success: true, token, ...state });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
+});
+
+app.get('/api/session', async (req, res) => {
+  const token = getBearerToken(req);
+  if (!token) return res.status(401).json({ error: 'Missing session token' });
+
+  try {
+    const session = await db.query('SELECT user_id FROM Sessions WHERE token = $1', [token]);
+    if (session.rows.length === 0) return res.status(401).json({ error: 'Invalid session token' });
+
+    const state = await buildUserState(session.rows[0].user_id);
+    if (!state) return res.status(401).json({ error: 'Invalid session user' });
+
+    res.json({ success: true, ...state });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.delete('/api/session', async (req, res) => {
+  const token = getBearerToken(req);
+  if (token) {
+    try {
+      await db.query('DELETE FROM Sessions WHERE token = $1', [token]);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+  res.json({ success: true });
 });
 
 // --- COMPANY API ---
@@ -57,11 +154,13 @@ app.post('/api/companies/create', async (req, res) => {
     const code = generateJoinCode();
     const cRes = await client.query('INSERT INTO Companies (name, join_code) VALUES ($1, $2) RETURNING id', [name, code]);
     const companyId = cRes.rows[0].id;
-    
+
     await client.query('INSERT INTO CompanyMembers (user_id, company_id, role, status) VALUES ($1, $2, $3, $4)', [user_id, companyId, 'owner', 'active']);
-    
+    await client.query('UPDATE Users SET selected_company_id = $1 WHERE id = $2', [companyId, user_id]);
+
     await client.query('COMMIT');
-    res.json({ success: true, company: { id: companyId, name, join_code: code, role: 'owner' } });
+    const state = await buildUserState(user_id);
+    res.json({ success: true, ...state });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error(err);
@@ -73,8 +172,9 @@ app.post('/api/companies/create', async (req, res) => {
 
 app.get('/api/companies/search', async (req, res) => {
   const { code } = req.query;
+  if (!code) return res.status(400).json({ error: 'Missing join code' });
   try {
-    const result = await db.query('SELECT id, name FROM Companies WHERE join_code = $1', [code.toUpperCase()]);
+    const result = await db.query('SELECT id, name FROM Companies WHERE join_code = $1', [String(code).toUpperCase()]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Company not found' });
     res.json({ company: result.rows[0] });
   } catch (err) {
@@ -85,8 +185,55 @@ app.get('/api/companies/search', async (req, res) => {
 app.post('/api/companies/join', async (req, res) => {
   const { user_id, company_id } = req.body;
   try {
-    await db.query('INSERT INTO CompanyMembers (user_id, company_id, role, status) VALUES ($1, $2, $3, $4)', [user_id, company_id, 'employee', 'pending']);
-    res.json({ success: true });
+    await db.query(`
+      INSERT INTO CompanyMembers (user_id, company_id, role, status)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (user_id, company_id) DO UPDATE SET status = CompanyMembers.status
+    `, [user_id, company_id, 'employee', 'pending']);
+    await db.query('UPDATE Users SET selected_company_id = $1 WHERE id = $2', [company_id, user_id]);
+
+    const state = await buildUserState(user_id);
+    res.json({ success: true, ...state });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/users/selected-company', async (req, res) => {
+  const { user_id, company_id } = req.body;
+  try {
+    const member = await db.query(
+      'SELECT id FROM CompanyMembers WHERE user_id = $1 AND company_id = $2',
+      [user_id, company_id]
+    );
+    if (member.rows.length === 0) return res.status(403).json({ error: 'Forbidden' });
+
+    await db.query('UPDATE Users SET selected_company_id = $1 WHERE id = $2', [company_id, user_id]);
+    const state = await buildUserState(user_id);
+    res.json({ success: true, ...state });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- COMPANY SETTINGS API ---
+app.put('/api/boss/settings', async (req, res) => {
+  const { company_id, user_id, work_start_time, work_end_time, max_leave_days } = req.body;
+  try {
+    // Verify owner role
+    const memberCheck = await db.query('SELECT role FROM CompanyMembers WHERE company_id = $1 AND user_id = $2', [company_id, user_id]);
+    if (memberCheck.rows.length === 0 || memberCheck.rows[0].role !== 'owner') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    await db.query(
+      'UPDATE Companies SET work_start_time = $1, work_end_time = $2, max_leave_days = $3 WHERE id = $4',
+      [work_start_time, work_end_time, max_leave_days, company_id]
+    );
+    const state = await buildUserState(user_id);
+    res.json({ success: true, ...state });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -297,12 +444,30 @@ app.post('/api/boss/personnel/disconnect', async (req, res) => {
 // --- LEAVE API ---
 app.post('/api/leave', async (req, res) => {
   const { user_id, company_id, date, reason, leave_type, submitter_role } = req.body;
-  // Auto-approve only 'Nghỉ phép', all others require approval
-  const approval_status = (leave_type === 'Nghỉ phép' || !leave_type) ? 'approved' : 'pending';
+  const normalizedLeaveType = leave_type || 'Nghỉ phép';
+  // Auto-approve only annual leave, all others require approval.
+  const approval_status = normalizedLeaveType === 'Nghỉ phép' ? 'approved' : 'pending';
   try {
+    if (normalizedLeaveType === 'Nghỉ phép') {
+      const quota = await db.query('SELECT max_leave_days FROM Companies WHERE id = $1', [company_id]);
+      const maxLeaveDays = quota.rows[0]?.max_leave_days || 12;
+      const used = await db.query(`
+        SELECT COUNT(*)::int AS used_days
+        FROM LeaveRequests
+        WHERE user_id = $1
+          AND company_id = $2
+          AND leave_type = $3
+          AND approval_status = 'approved'
+      `, [user_id, company_id, 'Nghỉ phép']);
+
+      if ((used.rows[0]?.used_days || 0) >= maxLeaveDays) {
+        return res.status(400).json({ error: 'Đã hết quỹ nghỉ phép' });
+      }
+    }
+
     await db.query(
       'INSERT INTO LeaveRequests (user_id, company_id, date, reason, leave_type, approval_status, submitter_role) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-      [user_id, company_id, date, reason, leave_type || 'Nghỉ phép', approval_status, submitter_role || 'employee']
+      [user_id, company_id, date, reason, normalizedLeaveType, approval_status, submitter_role || 'employee']
     );
     res.json({ success: true });
   } catch (err) {
@@ -426,6 +591,8 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   const client = await db.pool.connect();
   try {
     const records = parseFile(req.file.path);
+    const companySettings = await client.query('SELECT work_start_time FROM Companies WHERE id = $1', [company_id]);
+    const workStartTime = companySettings.rows[0]?.work_start_time || '09:00:00';
     const grouped = {};
     const employeesMap = {};
 
@@ -467,7 +634,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         const parts = timeStr.split(':').map(Number);
         return (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0);
       };
-      const isLate = parseTime(firstCheckIn) > 9 * 3600;
+      const isLate = parseTime(firstCheckIn) > parseTime(workStartTime);
 
       await client.query(`
         INSERT INTO Attendance (enNo, company_id, date, firstCheckIn, lastCheckOut, isLate)

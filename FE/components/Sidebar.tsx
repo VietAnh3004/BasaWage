@@ -68,6 +68,16 @@ const Sidebar = () => {
             <Text style={[styles.menuItemText, activeTab === 'statistics' && styles.menuItemTextActive]}>Thống kê</Text>
           </TouchableOpacity>
         )}
+
+        {company.role === 'owner' && (
+          <TouchableOpacity 
+            style={[styles.menuItem, activeTab === 'settings' && styles.menuItemActive]}
+            onPress={() => navigation.navigate('Dashboard', { screen: 'Settings' })}
+          >
+            <Ionicons name="settings-outline" size={18} color={activeTab === 'settings' ? "#fff" : "#888"} />
+            <Text style={[styles.menuItemText, activeTab === 'settings' && styles.menuItemTextActive]}>Cài đặt công ty</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={styles.footer}>

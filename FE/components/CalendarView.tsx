@@ -23,6 +23,14 @@ const CalendarView = () => {
   const isEmployee = company.role === 'employee';
   const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 
+  const timeToSeconds = (timeStr: string) => {
+    const [h, m, s] = (timeStr || '00:00:00').split(':').map(Number);
+    return (h || 0) * 3600 + (m || 0) * 60 + (s || 0);
+  };
+
+  const workStartSeconds = timeToSeconds(company.work_start_time || '09:00:00');
+  const workEndSeconds = timeToSeconds(company.work_end_time || '18:00:00');
+
   const fetchData = async () => {
     try {
       const [res, resLeave] = await Promise.all([
@@ -102,11 +110,6 @@ const CalendarView = () => {
     }
   };
 
-  const timeToSeconds = (timeStr: string) => {
-    const [h, m, s] = timeStr.split(':').map(Number);
-    return (h || 0) * 3600 + (m || 0) * 60 + (s || 0);
-  };
-
   const isEmployeeInDept = (enNo: string) => {
     if (!selectedDepartment) return true;
     const p = personnel.find(p => p.enno === enNo);
@@ -116,7 +119,7 @@ const CalendarView = () => {
   const getLateEmployees = (dateStr: string, isWeekend: boolean) => {
     if (isWeekend) return [];
     return attendance
-      .filter(a => a.date === dateStr && timeToSeconds(a.firstCheckIn) > 9 * 3600 && (!selectedEmployee || a.enNo === selectedEmployee) && isEmployeeInDept(a.enNo))
+      .filter(a => a.date === dateStr && timeToSeconds(a.firstCheckIn) > workStartSeconds && (!selectedEmployee || a.enNo === selectedEmployee) && isEmployeeInDept(a.enNo))
       .map(a => employees.find(e => e.enNo === a.enNo))
       .filter(Boolean);
   };
@@ -124,7 +127,7 @@ const CalendarView = () => {
   const getLeaveEarlyEmployees = (dateStr: string, isWeekend: boolean) => {
     if (isWeekend) return [];
     return attendance
-      .filter(a => a.date === dateStr && timeToSeconds(a.lastCheckOut) < 18 * 3600 && (!selectedEmployee || a.enNo === selectedEmployee) && isEmployeeInDept(a.enNo))
+      .filter(a => a.date === dateStr && timeToSeconds(a.lastCheckOut) < workEndSeconds && (!selectedEmployee || a.enNo === selectedEmployee) && isEmployeeInDept(a.enNo))
       .map(a => employees.find(e => e.enNo === a.enNo))
       .filter(Boolean);
   };
@@ -271,7 +274,7 @@ const CalendarView = () => {
     const timelineLogs = attendance.filter(a => 
       !isWeekend &&
       a.date === selectedDate && 
-      (a.isLate || timeToSeconds(a.lastCheckOut) < 18 * 3600) &&
+      (timeToSeconds(a.firstCheckIn) > workStartSeconds || timeToSeconds(a.lastCheckOut) < workEndSeconds) &&
       (!selectedEmployee || a.enNo === selectedEmployee) &&
       isEmployeeInDept(a.enNo)
     );

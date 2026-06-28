@@ -21,7 +21,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 const LeaveManagement = () => {
   const { user, company } = useAuth();
-  const [leaves, setLeaves] = useState([]);
+  const [leaves, setLeaves] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
   const ITEMS_PER_PAGE = 12;
@@ -83,6 +83,10 @@ const LeaveManagement = () => {
       alert("Vui lòng nhập Ngày và Lý do");
       return;
     }
+    if (leaveType === 'Nghỉ phép' && remainingLeaves <= 0) {
+      alert("Bạn đã hết quỹ nghỉ phép.");
+      return;
+    }
     setSubmitting(true);
     try {
       const res = await fetch(`${API_URL}/api/leave`, {
@@ -97,6 +101,12 @@ const LeaveManagement = () => {
           submitter_role: company.role,
         })
       });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || "Không thể gửi đơn");
+        setSubmitting(false);
+        return;
+      }
       if (res.ok) {
         setDateStr('');
         setReason('');
@@ -167,9 +177,31 @@ const LeaveManagement = () => {
     return <ActivityIndicator size="large" color="#4a72b5" style={{marginTop: 50}} />;
   }
 
+  const totalLeaves = leaves.length;
+  const pendingLeaves = leaves.filter((l: any) => l.approval_status === 'pending').length;
+  const myApprovedLeavesCount = leaves.filter((l: any) => l.approval_status === 'approved' && l.user_id === user.id).length;
+  const maxLeaveDays = company.max_leave_days || 12;
+  const remainingLeaves = Math.max(0, maxLeaveDays - myApprovedLeavesCount);
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Quản lý Vắng mặt</Text>
+      
+      <View style={styles.statsContainer}>
+        <View style={styles.statBox}>
+          <Text style={styles.statValue}>{remainingLeaves} / {maxLeaveDays}</Text>
+          <Text style={styles.statLabel}>Phép còn lại</Text>
+        </View>
+        <View style={styles.statBox}>
+          <Text style={styles.statValue}>{totalLeaves}</Text>
+          <Text style={styles.statLabel}>Tổng đơn</Text>
+        </View>
+        <View style={styles.statBox}>
+          <Text style={styles.statValue}>{pendingLeaves}</Text>
+          <Text style={styles.statLabel}>Chờ duyệt</Text>
+        </View>
+      </View>
+
       <Text style={styles.subtitle}>
         {canSubmitLeave ? "Bạn có thể gửi đơn xin vắng mặt tại đây." : "Xem và duyệt đơn vắng mặt của nhân viên."}
       </Text>
@@ -356,6 +388,31 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
     marginBottom: 20,
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    gap: 15,
+    marginBottom: 20,
+  },
+  statBox: {
+    flex: 1,
+    backgroundColor: '#fff',
+    padding: 15,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#eee',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statValue: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#4a72b5',
+    marginBottom: 4,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#666',
   },
   formCard: {
     backgroundColor: '#fff',
