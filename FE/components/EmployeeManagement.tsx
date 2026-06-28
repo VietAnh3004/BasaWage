@@ -10,7 +10,7 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 const EmployeeManagement = () => {
   const { user, company } = useAuth();
   
-  const [viewMode, setViewMode] = useState<'personnel' | 'users' | 'connections'>('personnel');
+  const [viewMode, setViewMode] = useState<'personnel' | 'users' | 'connections' | 'machine'>('personnel');
   const [searchQuery, setSearchQuery] = useState('');
   
   const [members, setMembers] = useState<any[]>([]);
@@ -139,7 +139,7 @@ const EmployeeManagement = () => {
   const handleSaveConnection = async () => {
     if (!connForm.personnel_id) return alert('Vui lòng chọn nhân sự');
     try {
-      await fetch(`${API_URL}/api/boss/personnel/connect`, {
+      const res = await fetch(`${API_URL}/api/boss/personnel/connect`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           company_id: company.company_id, 
@@ -148,6 +148,11 @@ const EmployeeManagement = () => {
           enno: connForm.enno || null 
         })
       });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Không thể lưu kết nối');
+        return;
+      }
       setShowAddConnection(false);
       setConnForm({ personnel_id: '', user_id: '', enno: '' });
       fetchData();
@@ -179,6 +184,45 @@ const EmployeeManagement = () => {
       // Optimistic update: clear user/enno links
       setPersonnel(prev => prev.map(p => p.id === personnel_id ? { ...p, user_id: null, user_username: null, enno: null } : p));
     } catch (e) { console.error(e); }
+  };
+
+  const isMachineEmployeeConnected = (enNo: string) => {
+    return personnel.some(p => p.enno === enNo) || members.some(m => m.linked_enno === enNo);
+  };
+
+  const selectedConnectionPersonnel = personnel.find(p => String(p.id) === String(connForm.personnel_id));
+
+  const availablePersonnel = personnel.filter(p => {
+    if (String(p.id) === String(connForm.personnel_id)) return true;
+    return !p.user_id && !p.enno;
+  });
+
+  const availableMembers = members.filter(m => {
+    if (String(m.user_id) === String(selectedConnectionPersonnel?.user_id || connForm.user_id)) return true;
+    return !m.linked_enno && !personnel.some(p => String(p.user_id) === String(m.user_id));
+  });
+
+  const availableMachineEmployees = machineEmployees.filter(emp => {
+    if (String(emp.enNo) === String(selectedConnectionPersonnel?.enno || connForm.enno)) return true;
+    return !personnel.some(p => String(p.enno) === String(emp.enNo)) && !members.some(m => String(m.linked_enno) === String(emp.enNo));
+  });
+
+  const handleDeleteMachineEmployee = async (enNo: string) => {
+    if (!confirm(`Bạn có chắc muốn xóa ID máy chấm công ${enNo} khỏi hệ thống không?`)) return;
+    try {
+      const res = await fetch(`${API_URL}/api/boss/machine-employees/${encodeURIComponent(enNo)}?company_id=${company.company_id}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Không thể xóa ID máy chấm công');
+        return;
+      }
+      fetchData();
+    } catch (e) {
+      console.error(e);
+      alert('Lỗi kết nối máy chủ');
+    }
   };
 
   if (loading) {
@@ -312,7 +356,7 @@ const EmployeeManagement = () => {
           {/* Personnel Dropdown */}
           <View style={{flex: 2, position: 'relative', paddingRight: 10, zIndex: 3000}}>
             <SearchableDropdown
-              data={personnel}
+              data={availablePersonnel}
               value={connForm.personnel_id}
               onChange={(val) => setConnForm({...connForm, personnel_id: val})}
               placeholder="Chọn nhân sự..."
@@ -326,7 +370,7 @@ const EmployeeManagement = () => {
           {/* User Account Dropdown */}
           <View style={{flex: 2, position: 'relative', paddingRight: 10, zIndex: 2000}}>
             <SearchableDropdown
-              data={members}
+              data={availableMembers}
               value={connForm.user_id}
               onChange={(val) => setConnForm({...connForm, user_id: val})}
               placeholder="Chọn tài khoản..."
@@ -340,7 +384,7 @@ const EmployeeManagement = () => {
           {/* Timeclock Dropdown */}
           <View style={{flex: 2, position: 'relative', paddingRight: 10, zIndex: 1000}}>
             <SearchableDropdown
-              data={machineEmployees}
+              data={availableMachineEmployees}
               value={connForm.enno}
               onChange={(val) => setConnForm({...connForm, enno: val})}
               placeholder="Chọn ID máy..."
@@ -365,7 +409,7 @@ const EmployeeManagement = () => {
       {!showAddConnection && canManage && (
         <TouchableOpacity style={styles.addBtnRow} onPress={() => setShowAddConnection(true)}>
           <Ionicons name="add-circle" size={20} color="#4a72b5" />
-          <Text style={{color: '#4a72b5', fontWeight: 'bold', marginLeft: 5}}>Kết nối mới</Text>
+          <Text style={{color: '#4a72b5', fontWeight: 'bold', marginLeft: 5}}>Liên kết mới</Text>
         </TouchableOpacity>
       )}
 
@@ -407,6 +451,60 @@ const EmployeeManagement = () => {
     </View>
   );
 
+  const renderMachineEmployeesView = () => (
+    <View style={styles.table}>
+      <View style={styles.tableHeader}>
+        <Text style={[styles.cell, {flex: 1.5, fontWeight: 'bold'}]}>ID máy chấm công</Text>
+        <Text style={[styles.cell, {flex: 2.5, fontWeight: 'bold'}]}>Tên trên máy</Text>
+        <Text style={[styles.cell, {flex: 1.5, fontWeight: 'bold'}]}>Trạng thái</Text>
+        <Text style={[styles.cell, {flex: 1, textAlign: 'center', fontWeight: 'bold'}]}>Hành động</Text>
+      </View>
+      {(() => {
+        const filtered = machineEmployees.filter(emp =>
+          !searchQuery ||
+          emp.enNo?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          emp.name?.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+        const paginated = filtered.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+        return (
+          <>
+            {paginated.map(emp => {
+              const connected = isMachineEmployeeConnected(emp.enNo);
+              return (
+                <View key={emp.enNo} style={styles.tableRow}>
+                  <Text style={[styles.cell, {flex: 1.5, fontWeight: 'bold'}]}>{emp.enNo}</Text>
+                  <Text style={[styles.cell, {flex: 2.5}]}>{emp.name}</Text>
+                  <View style={{flex: 1.5}}>
+                    <View style={[styles.statusBadge, connected ? styles.statusConnected : styles.statusDisconnected]}>
+                      <Text style={[styles.statusBadgeText, connected ? styles.statusConnectedText : styles.statusDisconnectedText]}>
+                        {connected ? 'Đã kết nối' : 'Chưa kết nối'}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={{flex: 1, alignItems: 'center'}}>
+                    {canManage && (
+                      <TouchableOpacity onPress={() => handleDeleteMachineEmployee(emp.enNo)}>
+                        <Ionicons name="trash" size={18} color="#f28baf" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              );
+            })}
+            {filtered.length === 0 && (
+              <Text style={{padding: 20, textAlign: 'center', color: '#888'}}>Chưa có ID máy chấm công nào.</Text>
+            )}
+            <Pagination
+              currentPage={currentPage}
+              totalPages={Math.ceil(filtered.length / ITEMS_PER_PAGE)}
+              onPageChange={setCurrentPage}
+            />
+          </>
+        );
+      })()}
+    </View>
+  );
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -419,13 +517,13 @@ const EmployeeManagement = () => {
           onPress={() => {
             if (navigator && navigator.clipboard) {
               navigator.clipboard.writeText(company.join_code);
-              alert('Đã copy mã mời: ' + company.join_code);
+              alert('Đã copy code: ' + company.join_code);
             } else {
-              alert('Mã mời của bạn là: ' + company.join_code);
+              alert('Code của bạn là: ' + company.join_code);
             }
           }}
         >
-          <Text style={{color: '#5e802b', fontWeight: 'bold'}}>Lấy Mã Mời: {company.join_code}</Text>
+          <Text style={{color: '#5e802b', fontWeight: 'bold'}}>Lấy Code: {company.join_code}</Text>
         </TouchableOpacity>
       </View>
 
@@ -437,8 +535,11 @@ const EmployeeManagement = () => {
         <TouchableOpacity style={[styles.tabBtn, viewMode === 'users' && styles.tabBtnActive]} onPress={() => setViewMode('users')}>
           <Text style={[styles.tabText, viewMode === 'users' && styles.tabTextActive]}>Tài khoản NV</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={[styles.tabBtn, viewMode === 'machine' && styles.tabBtnActive]} onPress={() => setViewMode('machine')}>
+          <Text style={[styles.tabText, viewMode === 'machine' && styles.tabTextActive]}>Máy chấm công</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={[styles.tabBtn, viewMode === 'connections' && styles.tabBtnActive]} onPress={() => setViewMode('connections')}>
-          <Text style={[styles.tabText, viewMode === 'connections' && styles.tabTextActive]}>Kết nối</Text>
+          <Text style={[styles.tabText, viewMode === 'connections' && styles.tabTextActive]}>Liên kết</Text>
         </TouchableOpacity>
       </View>
 
@@ -454,6 +555,7 @@ const EmployeeManagement = () => {
       {viewMode === 'personnel' && renderPersonnelView()}
       {viewMode === 'users' && renderUsersView()}
       {viewMode === 'connections' && renderConnectionsView()}
+      {viewMode === 'machine' && renderMachineEmployeesView()}
 
       {/* Modal for adding/editing Personnel */}
       <Modal visible={showPersonnelModal} transparent animationType="fade">
@@ -612,6 +714,31 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
     color: '#fff',
+  },
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+  },
+  statusConnected: {
+    backgroundColor: '#e8f5e9',
+    borderColor: '#4caf50',
+  },
+  statusDisconnected: {
+    backgroundColor: '#fff7e6',
+    borderColor: '#ffa500',
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  statusConnectedText: {
+    color: '#4caf50',
+  },
+  statusDisconnectedText: {
+    color: '#cc7a00',
   },
   actionBtn: {
     backgroundColor: '#4a72b5',

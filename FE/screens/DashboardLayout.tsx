@@ -7,6 +7,7 @@ import EmployeeManagement from '../components/EmployeeManagement';
 import LeaveManagement from '../components/LeaveManagement';
 import StatisticsView from '../components/StatisticsView';
 import SettingsView from '../components/SettingsView';
+import ProfileSettingsView from '../components/ProfileSettingsView';
 import { useAuth } from '../context/AuthContext';
 
 const Stack = createNativeStackNavigator();
@@ -45,6 +46,7 @@ const DashboardLayout = () => {
               <Stack.Screen name="Leave" component={LeaveManagement} />
               <Stack.Screen name="Statistics" component={StatisticsView} />
               <Stack.Screen name="Settings" component={SettingsView} />
+              <Stack.Screen name="ProfileSettings" component={ProfileSettingsView} />
             </Stack.Navigator>
           </ScrollView>
         </View>

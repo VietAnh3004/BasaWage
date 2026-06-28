@@ -252,8 +252,8 @@ const CalendarView = () => {
               
               {cell.isCurrentMonth && (
                 <View style={styles.eventTextContainer}>
-                  {lateCount > 0 && <Text style={{color: '#f28baf', fontSize: 12, fontWeight: 'bold'}}>{lateCount} muộn</Text>}
-                  {earlyCount > 0 && <Text style={{color: '#ffa500', fontSize: 12, fontWeight: 'bold'}}>{earlyCount} về sớm</Text>}
+                  {lateCount > 0 && <Text style={{color: '#dc2626', fontSize: 12, fontWeight: 'bold'}}>{lateCount} muộn</Text>}
+                  {earlyCount > 0 && <Text style={{color: '#7c3aed', fontSize: 12, fontWeight: 'bold'}}>{earlyCount} về sớm</Text>}
                   {absentCount > 0 && <Text style={{color: '#4a72b5', fontSize: 12, fontWeight: 'bold'}}>{absentCount} vắng mặt</Text>}
                   {leaveCount > 0 && <Text style={{color: '#4caf50', fontSize: 12, fontWeight: 'bold'}}>{leaveCount} có phép</Text>}
                 </View>

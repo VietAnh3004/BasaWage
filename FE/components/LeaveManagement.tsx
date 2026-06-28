@@ -115,7 +115,7 @@ const LeaveManagement = () => {
         const msg = leaveType === 'Nghỉ phép'
           ? "Đã tạo đơn vắng mặt thành công!"
           : "Đã gửi đơn, chờ Sếp tổng phê duyệt!";
-        alert(msg);
+        alert(data.mailWarning ? `${msg}\n\n${data.mailWarning}` : msg);
       }
     } catch (err) {
       console.error(err);

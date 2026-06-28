@@ -13,6 +13,7 @@ const AuthScreen = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
 
   const handleSubmit = async () => {
     if (!email || !password || (!isLogin && !username)) {
@@ -20,6 +21,7 @@ const AuthScreen = () => {
       return;
     }
     setError('');
+    setInfo('');
     setLoading(true);
     
     try {
@@ -41,9 +43,9 @@ const AuthScreen = () => {
       if (isLogin) {
         await login(data);
       } else {
-        // Switch to login after register
         setIsLogin(true);
-        setError('Đăng ký thành công! Hãy đăng nhập.');
+        setPassword('');
+        setInfo('Đã gửi email xác thực. Vui lòng kiểm tra email và bấm link xác thực trước khi đăng nhập.');
       }
     } catch (err) {
       setError('Lỗi kết nối máy chủ');
@@ -75,6 +77,7 @@ const AuthScreen = () => {
         </View>
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
+        {info ? <Text style={styles.infoText}>{info}</Text> : null}
 
         <View style={styles.inputContainer}>
           <Text style={styles.label}>Email</Text>
@@ -207,6 +210,17 @@ const styles = StyleSheet.create({
   },
   errorText: {
     color: '#f28baf',
+    marginBottom: 15,
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  infoText: {
+    color: '#2e7d32',
+    backgroundColor: '#e8f5e9',
+    borderColor: '#c8e6c9',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
     marginBottom: 15,
     textAlign: 'center',
     fontWeight: '500',

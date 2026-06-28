@@ -4,6 +4,8 @@ const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs');
 const crypto = require('crypto');
+const net = require('net');
+const tls = require('tls');
 const db = require('./db');
 
 const app = express();
@@ -69,6 +71,133 @@ const verifyPassword = (password, storedPassword) => {
   return crypto.timingSafeEqual(candidateBuffer, storedBuffer);
 };
 
+const createVerificationToken = () => crypto.randomBytes(32).toString('hex');
+
+const escapeHtml = (text) => String(text)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#039;');
+
+const smtpRead = (socket) => new Promise((resolve, reject) => {
+  let buffer = '';
+  const onData = (chunk) => {
+    buffer += chunk.toString('utf8');
+    const lines = buffer.split(/\r?\n/).filter(Boolean);
+    const lastLine = lines[lines.length - 1] || '';
+    if (/^\d{3} /.test(lastLine)) {
+      socket.off('data', onData);
+      socket.off('error', reject);
+      resolve(buffer);
+    }
+  };
+  socket.on('data', onData);
+  socket.once('error', reject);
+});
+
+const smtpCommand = async (socket, command, expectedCodes = ['250']) => {
+  socket.write(`${command}\r\n`);
+  const response = await smtpRead(socket);
+  const code = response.slice(0, 3);
+  if (!expectedCodes.includes(code)) {
+    throw new Error(`SMTP command failed (${command}): ${response.trim()}`);
+  }
+  return response;
+};
+
+const sendMail = async ({ to, subject, text, html }) => {
+  const host = process.env.SMTP_HOST;
+  const port = parseInt(process.env.SMTP_PORT || '587', 10);
+  const secure = process.env.SMTP_SECURE === 'true' || port === 465;
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+  const from = process.env.MAIL_FROM || user;
+
+  if (!host || !from) {
+    throw new Error('SMTP is not configured');
+  }
+
+  let socket = secure ? tls.connect({ host, port, servername: host }) : net.connect({ host, port });
+  await new Promise((resolve, reject) => {
+    socket.once(secure ? 'secureConnect' : 'connect', resolve);
+    socket.once('error', reject);
+  });
+  await smtpRead(socket);
+  await smtpCommand(socket, `EHLO ${process.env.SMTP_HELO || 'localhost'}`);
+
+  if (!secure && process.env.SMTP_STARTTLS !== 'false') {
+    await smtpCommand(socket, 'STARTTLS', ['220']);
+    socket = tls.connect({ socket, servername: host });
+    await new Promise((resolve, reject) => {
+      socket.once('secureConnect', resolve);
+      socket.once('error', reject);
+    });
+    await smtpCommand(socket, `EHLO ${process.env.SMTP_HELO || 'localhost'}`);
+  }
+
+  if (user && pass) {
+    await smtpCommand(socket, 'AUTH LOGIN', ['334']);
+    await smtpCommand(socket, Buffer.from(user).toString('base64'), ['334']);
+    await smtpCommand(socket, Buffer.from(pass).toString('base64'), ['235']);
+  }
+
+  const encodedSubject = `=?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=`;
+  const message = [
+    `From: ${from}`,
+    `To: ${to}`,
+    `Subject: ${encodedSubject}`,
+    'MIME-Version: 1.0',
+    'Content-Type: multipart/alternative; boundary="chamcong_boundary"',
+    '',
+    '--chamcong_boundary',
+    'Content-Type: text/plain; charset=UTF-8',
+    '',
+    text,
+    '',
+    '--chamcong_boundary',
+    'Content-Type: text/html; charset=UTF-8',
+    '',
+    html,
+    '',
+    '--chamcong_boundary--',
+  ].join('\r\n').replace(/\r?\n\./g, '\r\n..');
+
+  await smtpCommand(socket, `MAIL FROM:<${from}>`);
+  await smtpCommand(socket, `RCPT TO:<${to}>`, ['250', '251']);
+  await smtpCommand(socket, 'DATA', ['354']);
+  socket.write(`${message}\r\n.\r\n`);
+  await smtpRead(socket);
+  await smtpCommand(socket, 'QUIT', ['221']);
+};
+
+const buildVerificationLink = (token) => {
+  const baseUrl = process.env.API_PUBLIC_URL || `http://localhost:${process.env.PORT || 3001}`;
+  return `${baseUrl.replace(/\/$/, '')}/api/verify-email?token=${encodeURIComponent(token)}`;
+};
+
+const sendVerificationEmail = async (email, username, token) => {
+  const link = buildVerificationLink(token);
+  const safeName = escapeHtml(username || email);
+
+  await sendMail({
+    to: email,
+    subject: 'Xác thực tài khoản chấm công',
+    text: `Xin chào ${username || email},\n\nVui lòng mở link sau để xác thực tài khoản:\n${link}\n\nLink có hiệu lực trong 24 giờ.`,
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;color:#222">
+        <h2>Xác thực tài khoản chấm công</h2>
+        <p>Xin chào ${safeName},</p>
+        <p>Vui lòng bấm nút bên dưới để xác thực tài khoản.</p>
+        <p><a href="${link}" style="display:inline-block;background:#4a72b5;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none">Xác thực tài khoản</a></p>
+        <p>Nếu nút không hoạt động, hãy mở link này:</p>
+        <p><a href="${link}">${link}</a></p>
+        <p>Link có hiệu lực trong 24 giờ.</p>
+      </div>
+    `,
+  });
+};
+
 const getBearerToken = (req) => {
   const header = req.headers.authorization || '';
   return header.startsWith('Bearer ') ? header.slice(7) : null;
@@ -78,13 +207,65 @@ const getBearerToken = (req) => {
 app.post('/api/register', async (req, res) => {
   const { email, username, password } = req.body;
   if (!email || !username || !password) return res.status(400).json({ error: 'Missing required fields' });
+  const client = await db.pool.connect();
   try {
-    const result = await db.query('INSERT INTO Users (email, username, password) VALUES ($1, $2, $3) RETURNING id, email, username', [email, username, hashPassword(password)]);
-    res.json({ success: true, user: result.rows[0] });
+    await client.query('BEGIN');
+    const verificationToken = createVerificationToken();
+    const result = await client.query(`
+      INSERT INTO Users (email, username, password, email_verified, email_verification_token, email_verification_expires)
+      VALUES ($1, $2, $3, false, $4, NOW() + INTERVAL '24 hours')
+      RETURNING id, email, username
+    `, [email, username, hashPassword(password), verificationToken]);
+    await sendVerificationEmail(email, username, verificationToken);
+    await client.query('COMMIT');
+    res.json({ success: true, verificationRequired: true, user: result.rows[0] });
   } catch (err) {
+    await client.query('ROLLBACK');
     if (err.code === '23505') return res.status(400).json({ error: 'Email already exists' });
+    if (err.message === 'SMTP is not configured') return res.status(500).json({ error: 'Chưa cấu hình SMTP để gửi email xác thực' });
+    if (err.code === 'ERR_SSL_WRONG_VERSION_NUMBER') {
+      return res.status(500).json({ error: 'Cấu hình SMTP_SECURE/SMTP_PORT chưa đúng. Với port 587 hãy dùng SMTP_SECURE=false; với port 465 hãy dùng SMTP_SECURE=true.' });
+    }
     console.error(err);
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/verify-email', async (req, res) => {
+  const { token } = req.query;
+  if (!token) return res.status(400).send('Thiếu token xác thực.');
+
+  try {
+    const result = await db.query(`
+      UPDATE Users
+      SET email_verified = true,
+          email_verification_token = NULL,
+          email_verification_expires = NULL
+      WHERE email_verification_token = $1
+        AND email_verification_expires > NOW()
+      RETURNING email
+    `, [token]);
+
+    if (result.rows.length === 0) {
+      return res.status(400).send(`
+        <html><body style="font-family:Arial,sans-serif;padding:32px">
+          <h2>Link xác thực không hợp lệ hoặc đã hết hạn</h2>
+          <p>Vui lòng đăng ký lại hoặc liên hệ quản trị viên.</p>
+        </body></html>
+      `);
+    }
+
+    res.send(`
+      <html><body style="font-family:Arial,sans-serif;padding:32px">
+        <h2>Xác thực email thành công</h2>
+        <p>Tài khoản ${escapeHtml(result.rows[0].email)} đã có thể đăng nhập.</p>
+      </body></html>
+    `);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Server error');
   }
 });
 
@@ -98,6 +279,9 @@ app.post('/api/login', async (req, res) => {
     const user = result.rows[0];
     if (!verifyPassword(password, user.password)) {
       return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    if (!user.email_verified) {
+      return res.status(403).json({ error: 'Vui lòng xác thực email trước khi đăng nhập' });
     }
     if (!user.password.startsWith('pbkdf2$')) {
       await db.query('UPDATE Users SET password = $1 WHERE id = $2', [hashPassword(password), user.id]);
@@ -141,6 +325,49 @@ app.delete('/api/session', async (req, res) => {
     }
   }
   res.json({ success: true });
+});
+
+app.put('/api/users/profile', async (req, res) => {
+  const { user_id, username, current_password, new_password } = req.body;
+  if (!user_id) return res.status(400).json({ error: 'Missing user_id' });
+
+  try {
+    const result = await db.query('SELECT id, password FROM Users WHERE id = $1', [user_id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+
+    const updates = [];
+    const params = [];
+
+    if (username !== undefined) {
+      const trimmedUsername = String(username).trim();
+      if (!trimmedUsername) return res.status(400).json({ error: 'Tên không được để trống' });
+      params.push(trimmedUsername);
+      updates.push(`username = $${params.length}`);
+    }
+
+    if (new_password) {
+      if (!current_password) return res.status(400).json({ error: 'Vui lòng nhập mật khẩu hiện tại' });
+      if (!verifyPassword(current_password, result.rows[0].password)) {
+        return res.status(400).json({ error: 'Mật khẩu hiện tại không đúng' });
+      }
+      if (String(new_password).length < 6) {
+        return res.status(400).json({ error: 'Mật khẩu mới phải có ít nhất 6 ký tự' });
+      }
+      params.push(hashPassword(new_password));
+      updates.push(`password = $${params.length}`);
+    }
+
+    if (updates.length === 0) return res.status(400).json({ error: 'Không có thông tin để cập nhật' });
+
+    params.push(user_id);
+    await db.query(`UPDATE Users SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
+
+    const state = await buildUserState(user_id);
+    res.json({ success: true, ...state });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // --- COMPANY API ---
@@ -384,6 +611,78 @@ app.post('/api/boss/personnel/connect', async (req, res) => {
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
+
+    const personnelRes = await client.query(
+      'SELECT id, user_id, enno FROM Personnel WHERE id = $1 AND company_id = $2',
+      [personnel_id, company_id]
+    );
+    if (personnelRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Không tìm thấy nhân sự' });
+    }
+    const currentPersonnel = personnelRes.rows[0];
+
+    if (user_id) {
+      const memberRes = await client.query(
+        'SELECT user_id FROM CompanyMembers WHERE company_id = $1 AND user_id = $2',
+        [company_id, user_id]
+      );
+      if (memberRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Tài khoản không thuộc công ty này' });
+      }
+
+      const userLinkedElsewhere = await client.query(
+        'SELECT id FROM Personnel WHERE company_id = $1 AND user_id = $2 AND id <> $3',
+        [company_id, user_id, personnel_id]
+      );
+      if (userLinkedElsewhere.rows.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Tài khoản này đã được kết nối với nhân sự khác' });
+      }
+    }
+
+    if (enno) {
+      const machineRes = await client.query(
+        'SELECT enNo FROM Employees WHERE company_id = $1 AND enNo = $2',
+        [company_id, enno]
+      );
+      if (machineRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'ID máy chấm công không tồn tại' });
+      }
+
+      const ennoLinkedElsewhere = await client.query(
+        'SELECT id FROM Personnel WHERE company_id = $1 AND enno = $2 AND id <> $3',
+        [company_id, enno, personnel_id]
+      );
+      if (ennoLinkedElsewhere.rows.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'ID máy chấm công này đã được kết nối với nhân sự khác' });
+      }
+
+      const accountLinkedElsewhere = await client.query(
+        `
+          SELECT user_id
+          FROM CompanyMembers
+          WHERE company_id = $1
+            AND linked_enno = $2
+            AND ($3::integer IS NULL OR user_id <> $3)
+        `,
+        [company_id, enno, user_id || null]
+      );
+      if (accountLinkedElsewhere.rows.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'ID máy chấm công này đã được kết nối với tài khoản khác' });
+      }
+    }
+
+    if (currentPersonnel.user_id && String(currentPersonnel.user_id) !== String(user_id || '')) {
+      await client.query(
+        'UPDATE CompanyMembers SET linked_enno = NULL WHERE user_id = $1 AND company_id = $2',
+        [currentPersonnel.user_id, company_id]
+      );
+    }
     
     // Update personnel record
     await client.query(
@@ -441,6 +740,107 @@ app.post('/api/boss/personnel/disconnect', async (req, res) => {
   }
 });
 
+app.delete('/api/boss/machine-employees/:enno', async (req, res) => {
+  const { enno } = req.params;
+  const { company_id } = req.query;
+  if (!company_id || !enno) return res.status(400).json({ error: 'Missing company_id or enno' });
+
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    await client.query(
+      'UPDATE Personnel SET enno = NULL WHERE company_id = $1 AND enno = $2',
+      [company_id, enno]
+    );
+    await client.query(
+      'UPDATE CompanyMembers SET linked_enno = NULL WHERE company_id = $1 AND linked_enno = $2',
+      [company_id, enno]
+    );
+    const result = await client.query(
+      'DELETE FROM Employees WHERE company_id = $1 AND enNo = $2',
+      [company_id, enno]
+    );
+
+    await client.query('COMMIT');
+    res.json({ success: true, deleted: result.rowCount });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+const notifyManagersAboutLeave = async (leaveRequest) => {
+  const [companyRes, submitterRes, recipientsRes] = await Promise.all([
+    db.query('SELECT name FROM Companies WHERE id = $1', [leaveRequest.company_id]),
+    db.query('SELECT email, username FROM Users WHERE id = $1', [leaveRequest.user_id]),
+    db.query(`
+      SELECT DISTINCT u.email, u.username, cm.role
+      FROM CompanyMembers cm
+      JOIN Users u ON u.id = cm.user_id
+      WHERE cm.company_id = $1
+        AND cm.status = 'active'
+        AND cm.role IN ('owner', 'manager')
+    `, [leaveRequest.company_id]),
+  ]);
+
+  const companyName = companyRes.rows[0]?.name || `Công ty #${leaveRequest.company_id}`;
+  const submitter = submitterRes.rows[0] || {};
+  const recipients = recipientsRes.rows.filter(r => r.email);
+  if (recipients.length === 0) return;
+
+  const statusLabel = {
+    approved: 'Đã duyệt',
+    pending: 'Chờ duyệt',
+    rejected: 'Từ chối',
+  }[leaveRequest.approval_status] || leaveRequest.approval_status;
+
+  const lines = [
+    `Công ty: ${companyName}`,
+    `Người gửi: ${submitter.username || 'Không rõ'}`,
+    `Email người gửi: ${submitter.email || '-'}`,
+    `Ngày nghỉ: ${leaveRequest.date}`,
+    `Loại đơn: ${leaveRequest.leave_type || '-'}`,
+    `Lý do: ${leaveRequest.reason || '-'}`,
+    `Trạng thái: ${statusLabel}`,
+  ];
+
+  const htmlRows = [
+    ['Công ty', companyName],
+    ['Người gửi', submitter.username || 'Không rõ'],
+    ['Email người gửi', submitter.email || '-'],
+    ['Ngày nghỉ', leaveRequest.date],
+    ['Loại đơn', leaveRequest.leave_type || '-'],
+    ['Lý do', leaveRequest.reason || '-'],
+    ['Trạng thái', statusLabel],
+  ].map(([label, value]) => `
+    <tr>
+      <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600;background:#f9fafb">${escapeHtml(label)}</td>
+      <td style="padding:8px 12px;border:1px solid #e5e7eb">${escapeHtml(value)}</td>
+    </tr>
+  `).join('');
+
+  const results = await Promise.allSettled(recipients.map(recipient => sendMail({
+    to: recipient.email,
+    subject: `Đơn nghỉ phép mới - ${submitter.username || submitter.email || 'Nhân viên'}`,
+    text: `Có đơn nghỉ phép mới.\n\n${lines.join('\n')}`,
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;color:#222">
+        <h2>Có đơn nghỉ phép mới</h2>
+        <table style="border-collapse:collapse;border:1px solid #e5e7eb">${htmlRows}</table>
+      </div>
+    `,
+  })));
+
+  const failed = results.filter(result => result.status === 'rejected');
+  if (failed.length > 0) {
+    throw new Error(`Failed to send ${failed.length}/${recipients.length} leave notification emails`);
+  }
+};
+
 // --- LEAVE API ---
 app.post('/api/leave', async (req, res) => {
   const { user_id, company_id, date, reason, leave_type, submitter_role } = req.body;
@@ -465,11 +865,18 @@ app.post('/api/leave', async (req, res) => {
       }
     }
 
-    await db.query(
-      'INSERT INTO LeaveRequests (user_id, company_id, date, reason, leave_type, approval_status, submitter_role) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+    const inserted = await db.query(
+      'INSERT INTO LeaveRequests (user_id, company_id, date, reason, leave_type, approval_status, submitter_role) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
       [user_id, company_id, date, reason, normalizedLeaveType, approval_status, submitter_role || 'employee']
     );
-    res.json({ success: true });
+
+    try {
+      await notifyManagersAboutLeave(inserted.rows[0]);
+      res.json({ success: true });
+    } catch (mailErr) {
+      console.error('Leave notification email failed:', mailErr);
+      res.json({ success: true, mailWarning: 'Đã tạo đơn nhưng gửi email thông báo thất bại' });
+    }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });

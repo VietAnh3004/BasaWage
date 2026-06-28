@@ -218,13 +218,13 @@ const StatisticsView = () => {
 
       {/* Summary Cards */}
       <View style={styles.cardsRow}>
-        <View style={[styles.card, { borderLeftColor: '#f28baf', borderLeftWidth: 4 }]}>
+        <View style={[styles.card, { borderLeftColor: '#dc2626', borderLeftWidth: 4 }]}>
           <Text style={styles.cardTitle}>Đi muộn</Text>
-          <Text style={[styles.cardValue, {color: '#f28baf'}]}>{stats.totalLate}</Text>
+          <Text style={[styles.cardValue, {color: '#dc2626'}]}>{stats.totalLate}</Text>
         </View>
-        <View style={[styles.card, { borderLeftColor: '#ffa500', borderLeftWidth: 4 }]}>
+        <View style={[styles.card, { borderLeftColor: '#7c3aed', borderLeftWidth: 4 }]}>
           <Text style={styles.cardTitle}>Về sớm</Text>
-          <Text style={[styles.cardValue, {color: '#ffa500'}]}>{stats.totalEarly}</Text>
+          <Text style={[styles.cardValue, {color: '#7c3aed'}]}>{stats.totalEarly}</Text>
         </View>
         <View style={[styles.card, { borderLeftColor: '#4a72b5', borderLeftWidth: 4 }]}>
           <Text style={styles.cardTitle}>Vắng không phép</Text>
@@ -249,8 +249,8 @@ const StatisticsView = () => {
         {stats.employeeStats.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE).map(emp => (
           <View key={emp.enNo} style={styles.tableRow}>
             <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>{emp.name}</Text>
-            <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.late > 0 ? '#f28baf' : '#888'}]}>{emp.late}</Text>
-            <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.early > 0 ? '#ffa500' : '#888'}]}>{emp.early}</Text>
+            <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.late > 0 ? '#dc2626' : '#888'}]}>{emp.late}</Text>
+            <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.early > 0 ? '#7c3aed' : '#888'}]}>{emp.early}</Text>
             <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.absent > 0 ? '#4a72b5' : '#888'}]}>{emp.absent}</Text>
             <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.leave > 0 ? '#4caf50' : '#888'}]}>{emp.leave}</Text>
           </View>

@@ -78,6 +78,13 @@ const Sidebar = () => {
             <Text style={[styles.menuItemText, activeTab === 'settings' && styles.menuItemTextActive]}>Cài đặt công ty</Text>
           </TouchableOpacity>
         )}
+        <TouchableOpacity
+          style={[styles.menuItem, activeTab === 'profilesettings' && styles.menuItemActive]}
+          onPress={() => navigation.navigate('Dashboard', { screen: 'ProfileSettings' })}
+        >
+          <Ionicons name="person-circle-outline" size={18} color={activeTab === 'profilesettings' ? "#fff" : "#888"} />
+          <Text style={[styles.menuItemText, activeTab === 'profilesettings' && styles.menuItemTextActive]}>Thông tin cá nhân</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.footer}>

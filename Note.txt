@@ -1,8 +1,8 @@
-theo dõi quỹ ngày nghỉ phép.
-List người có trên máy chấm công nhưng chưa có thông tin nhân sự (Hãy cảnh báo).
-Lấy mã mời ->
-Đổi màu số dễ nhìn hơn
+theo dõi quỹ ngày nghỉ phép. (done)
+List người có trên máy chấm công nhưng chưa có thông tin nhân sự (Hãy cảnh báo).(done)
+Lấy mã mời -> (done)
+Đổi màu số dễ nhìn hơn (done)
 Sếp tổng cũng xin nghỉ phép để nhân viên biết.
-them nút tùy chỉnh giờ hành chính.
+them nút tùy chỉnh giờ hành chính.(done)
 Làm thông báo (qua mail).
 *Xin nghỉ phải xin muộn nhất từ 9h tối hôm trước* (có thể để sếp setup)

@@ -26,7 +26,10 @@ const initDb = async () => {
         email TEXT UNIQUE NOT NULL,
         username TEXT,
         password TEXT NOT NULL,
-        selected_company_id INTEGER
+        selected_company_id INTEGER,
+        email_verified BOOLEAN DEFAULT TRUE,
+        email_verification_token TEXT,
+        email_verification_expires TIMESTAMP
       )
     `);
 
@@ -156,6 +159,9 @@ const initDb = async () => {
     // Migration: add submitter_role to LeaveRequests if not exists
     try {
       await pool.query(`ALTER TABLE Users ADD COLUMN IF NOT EXISTS selected_company_id INTEGER`);
+      await pool.query(`ALTER TABLE Users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT TRUE`);
+      await pool.query(`ALTER TABLE Users ADD COLUMN IF NOT EXISTS email_verification_token TEXT`);
+      await pool.query(`ALTER TABLE Users ADD COLUMN IF NOT EXISTS email_verification_expires TIMESTAMP`);
       await pool.query(`ALTER TABLE Companies ADD COLUMN IF NOT EXISTS work_start_time TEXT DEFAULT '09:00:00'`);
       await pool.query(`ALTER TABLE Companies ADD COLUMN IF NOT EXISTS work_end_time TEXT DEFAULT '18:00:00'`);
       await pool.query(`ALTER TABLE Companies ADD COLUMN IF NOT EXISTS max_leave_days INTEGER DEFAULT 12`);
