@@ -126,6 +126,14 @@ const verifyPassword = (password, storedPassword) => {
 };
 
 const createVerificationToken = () => crypto.randomBytes(32).toString('hex');
+const createRandomPassword = (length = 8) => {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  let password = '';
+  for (let i = 0; i < length; i++) {
+    password += alphabet[crypto.randomInt(0, alphabet.length)];
+  }
+  return password;
+};
 
 const escapeHtml = (text) => String(text)
   .replace(/&/g, '&amp;')
@@ -243,6 +251,35 @@ const sendVerificationEmail = async (email, username, token) => {
         <h2>Xác thực tài khoản chấm công</h2>
         <p>Xin chào ${safeName},</p>
         <p>Vui lòng bấm nút bên dưới để xác thực tài khoản.</p>
+        <p><a href="${link}" style="display:inline-block;background:#4a72b5;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none">Xác thực tài khoản</a></p>
+        <p>Nếu nút không hoạt động, hãy mở link này:</p>
+        <p><a href="${link}">${link}</a></p>
+        <p>Link có hiệu lực trong 24 giờ.</p>
+      </div>
+    `,
+  });
+};
+
+const sendEmployeeAccountEmail = async (email, username, password, token) => {
+  const link = buildVerificationLink(token);
+  const safeName = escapeHtml(username || email);
+  const safeEmail = escapeHtml(email);
+  const safePassword = escapeHtml(password);
+
+  await sendMail({
+    to: email,
+    subject: 'Tài khoản chấm công của bạn',
+    text: `Xin chào ${username || email},\n\nCông ty đã tạo tài khoản chấm công cho bạn.\nEmail đăng nhập: ${email}\nMật khẩu: ${password}\n\nVui lòng xác thực tài khoản trước khi đăng nhập:\n${link}\n\nLink có hiệu lực trong 24 giờ.`,
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;color:#222">
+        <h2>Tài khoản chấm công của bạn</h2>
+        <p>Xin chào ${safeName},</p>
+        <p>Công ty đã tạo tài khoản chấm công cho bạn.</p>
+        <div style="background:#f5f8fd;border:1px solid #dbe6f5;border-radius:8px;padding:12px;margin:12px 0">
+          <p><strong>Email đăng nhập:</strong> ${safeEmail}</p>
+          <p><strong>Mật khẩu:</strong> ${safePassword}</p>
+        </div>
+        <p>Vui lòng bấm nút bên dưới để xác thực tài khoản trước khi đăng nhập.</p>
         <p><a href="${link}" style="display:inline-block;background:#4a72b5;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none">Xác thực tài khoản</a></p>
         <p>Nếu nút không hoạt động, hãy mở link này:</p>
         <p><a href="${link}">${link}</a></p>
@@ -642,33 +679,11 @@ app.post('/api/companies/create', async (req, res) => {
 });
 
 app.get('/api/companies/search', async (req, res) => {
-  const { code } = req.query;
-  if (!code) return res.status(400).json({ error: 'Missing join code' });
-  try {
-    const result = await db.query('SELECT id, name FROM Companies WHERE join_code = $1', [String(code).toUpperCase()]);
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Company not found' });
-    res.json({ company: result.rows[0] });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
+  return res.status(410).json({ error: 'Tính năng tự gia nhập công ty đã bị tắt. Tài khoản nhân viên sẽ do công ty cung cấp.' });
 });
 
 app.post('/api/companies/join', async (req, res) => {
-  const { user_id, company_id } = req.body;
-  try {
-    await db.query(`
-      INSERT INTO CompanyMembers (user_id, company_id, role, status)
-      VALUES ($1, $2, $3, $4)
-      ON CONFLICT (user_id, company_id) DO UPDATE SET status = CompanyMembers.status
-    `, [user_id, company_id, 'employee', 'pending']);
-    await db.query('UPDATE Users SET selected_company_id = $1 WHERE id = $2', [company_id, user_id]);
-
-    const state = await buildUserState(user_id);
-    res.json({ success: true, ...state });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
+  return res.status(410).json({ error: 'Tính năng tự gia nhập công ty đã bị tắt. Tài khoản nhân viên sẽ do công ty cung cấp.' });
 });
 
 app.post('/api/users/selected-company', async (req, res) => {
@@ -912,10 +927,12 @@ app.get('/api/boss/personnel', async (req, res) => {
   const { company_id } = req.query;
   try {
     const result = await db.query(`
-      SELECT p.*, d.name as department_name, u.email as user_email, u.username as user_username
+      SELECT p.*, d.name as department_name, u.email as user_email, u.username as user_username,
+             cm.role as user_role
       FROM Personnel p
       LEFT JOIN Departments d ON p.department_id = d.id
       LEFT JOIN Users u ON p.user_id = u.id
+      LEFT JOIN CompanyMembers cm ON cm.user_id = p.user_id AND cm.company_id = p.company_id
       WHERE p.company_id = $1
       ORDER BY p.id DESC
     `, [company_id]);
@@ -927,20 +944,50 @@ app.get('/api/boss/personnel', async (req, res) => {
 });
 
 app.post('/api/boss/personnel', async (req, res) => {
-  const { company_id, name, department_id } = req.body;
+  const { company_id, name, email, department_id } = req.body;
+  if (!company_id || !name || !email) return res.status(400).json({ error: 'Missing company_id, name or email' });
+  const client = await db.pool.connect();
   try {
-    const result = await db.query(
-      'INSERT INTO Personnel (company_id, name, department_id) VALUES ($1, $2, $3) RETURNING *',
-      [company_id, name, department_id || null]
+    await client.query('BEGIN');
+    const cleanEmail = String(email).trim().toLowerCase();
+    const cleanName = String(name).trim();
+    const password = createRandomPassword(8);
+    const verificationToken = createVerificationToken();
+
+    const userResult = await client.query(
+      `
+        INSERT INTO Users (email, username, password, email_verified, email_verification_token, email_verification_expires, selected_company_id)
+        VALUES ($1, $2, $3, false, $4, NOW() + INTERVAL '24 hours', $5)
+        RETURNING id, email, username
+      `,
+      [cleanEmail, cleanName, hashPassword(password), verificationToken, company_id]
+    );
+    const employeeUser = userResult.rows[0];
+
+    await client.query(
+      'INSERT INTO CompanyMembers (user_id, company_id, role, status) VALUES ($1, $2, $3, $4)',
+      [employeeUser.id, company_id, 'employee', 'active']
+    );
+
+    const result = await client.query(
+      'INSERT INTO Personnel (company_id, name, department_id, user_id) VALUES ($1, $2, $3, $4) RETURNING *',
+      [company_id, cleanName, department_id || null, employeeUser.id]
     );
     const department = department_id
-      ? await db.query('SELECT name FROM Departments WHERE id = $1 AND company_id = $2', [department_id, company_id])
+      ? await client.query('SELECT name FROM Departments WHERE id = $1 AND company_id = $2', [department_id, company_id])
       : { rows: [] };
     const departmentName = department.rows[0]?.name || 'Chưa có bộ phận';
     const personnelPayload = {
       ...result.rows[0],
       department_name: departmentName,
+      user_email: employeeUser.email,
+      user_username: employeeUser.username,
+      user_role: 'employee',
     };
+
+    await sendEmployeeAccountEmail(cleanEmail, cleanName, password, verificationToken);
+    await client.query('COMMIT');
+
     await emitCompanyEvent(company_id, {
       type: 'personnel_created',
       title: 'Nhân sự mới đã được thêm',
@@ -949,8 +996,16 @@ app.post('/api/boss/personnel', async (req, res) => {
     });
     res.json({ success: true, personnel: personnelPayload });
   } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.code === '23505') return res.status(400).json({ error: 'Email already exists' });
+    if (err.message === 'SMTP is not configured') return res.status(500).json({ error: 'Chưa cấu hình SMTP để gửi email tài khoản nhân viên' });
+    if (err.code === 'ERR_SSL_WRONG_VERSION_NUMBER') {
+      return res.status(500).json({ error: 'Cấu hình SMTP_SECURE/SMTP_PORT chưa đúng. Với port 587 hãy dùng SMTP_SECURE=false; với port 465 hãy dùng SMTP_SECURE=true.' });
+    }
     console.error(err);
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 
@@ -984,11 +1039,48 @@ app.put('/api/boss/personnel/:id/status', async (req, res) => {
 
 app.delete('/api/boss/personnel/:id', async (req, res) => {
   const { id } = req.params;
+  const { company_id, delete_linked_account = true } = req.body || {};
+  const client = await db.pool.connect();
   try {
-    await db.query('DELETE FROM Personnel WHERE id = $1', [id]);
-    res.json({ success: true });
+    await client.query('BEGIN');
+
+    const personnelRes = await client.query(
+      `
+        SELECT p.id, p.company_id, p.user_id, cm.role, u.username, u.email
+        FROM Personnel p
+        LEFT JOIN CompanyMembers cm ON cm.company_id = p.company_id AND cm.user_id = p.user_id
+        LEFT JOIN Users u ON u.id = p.user_id
+        WHERE p.id = $1
+      `,
+      [id]
+    );
+    if (personnelRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Không tìm thấy nhân sự' });
+    }
+
+    const person = personnelRes.rows[0];
+    if (company_id && String(person.company_id) !== String(company_id)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Nhân sự không thuộc công ty này' });
+    }
+
+    await client.query('DELETE FROM Personnel WHERE id = $1', [id]);
+
+    let deletedUserId = null;
+    if (delete_linked_account && person.user_id && person.role === 'employee') {
+      await client.query('DELETE FROM Users WHERE id = $1', [person.user_id]);
+      deletedUserId = person.user_id;
+    }
+
+    await client.query('COMMIT');
+    res.json({ success: true, deletedUserId });
   } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 

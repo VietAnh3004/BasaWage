@@ -7,66 +7,29 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 
 const CompanySelection = () => {
   const { user, applyServerState, logout } = useAuth();
-  const [view, setView] = useState('menu'); // 'menu', 'create', 'join'
+  const [view, setView] = useState('menu');
   const [companyName, setCompanyName] = useState('');
-  const [joinCode, setJoinCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const handleCreate = async () => {
-    if (!companyName) {
+    if (!companyName.trim()) {
       setError('Vui lòng nhập tên công ty');
       return;
     }
     setLoading(true);
+    setError('');
     try {
       const res = await fetch(`${API_URL}/api/companies/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: companyName, user_id: user.id })
+        body: JSON.stringify({ name: companyName.trim(), user_id: user.id })
       });
       const data = await res.json();
       if (data.success) {
         applyServerState(data);
       } else {
-        setError('Có lỗi xảy ra');
-      }
-    } catch (err) {
-      setError('Lỗi kết nối');
-    }
-    setLoading(false);
-  };
-
-  const handleJoin = async () => {
-    if (!joinCode) {
-      setError('Vui lòng nhập mã công ty');
-      return;
-    }
-    setLoading(true);
-    try {
-      // Find company
-      const searchRes = await fetch(`${API_URL}/api/companies/search?code=${joinCode}`);
-      const searchData = await searchRes.json();
-      
-      if (!searchRes.ok) {
-        setError(searchData.error || 'Không tìm thấy công ty');
-        setLoading(false);
-        return;
-      }
-      
-      // Join
-      const joinRes = await fetch(`${API_URL}/api/companies/join`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: user.id, company_id: searchData.company.id })
-      });
-      
-      if (joinRes.ok) {
-        const joinData = await joinRes.json();
-        alert('Đã gửi yêu cầu gia nhập! Vui lòng chờ Sếp duyệt.');
-        applyServerState(joinData);
-      } else {
-        setError('Có lỗi xảy ra');
+        setError(data.error || 'Có lỗi xảy ra');
       }
     } catch (err) {
       setError('Lỗi kết nối');
@@ -77,25 +40,22 @@ const CompanySelection = () => {
   return (
     <View style={styles.container}>
       <View style={styles.card}>
-        <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30}}>
+        <View style={styles.header}>
           <Text style={styles.greeting}>Xin chào, {user.username}!</Text>
           <TouchableOpacity onPress={logout}>
-             <Ionicons name="log-out-outline" size={24} color="#f28baf" />
+            <Ionicons name="log-out-outline" size={24} color="#f28baf" />
           </TouchableOpacity>
         </View>
 
         {view === 'menu' && (
           <View>
-            <Text style={styles.subtitle}>Bạn chưa tham gia công ty nào. Vui lòng chọn:</Text>
-            
+            <Text style={styles.subtitle}>
+              Tài khoản đăng ký mới dành riêng cho chủ doanh nghiệp. Hãy tạo công ty để bắt đầu.
+            </Text>
+
             <TouchableOpacity style={styles.actionBtn} onPress={() => { setView('create'); setError(''); }}>
               <Ionicons name="business-outline" size={24} color="#4a72b5" />
-              <Text style={styles.actionBtnText}>Tạo Công Ty Mới (Làm Sếp)</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity style={[styles.actionBtn, {marginTop: 15}]} onPress={() => { setView('join'); setError(''); }}>
-              <Ionicons name="enter-outline" size={24} color="#4a72b5" />
-              <Text style={styles.actionBtnText}>Gia Nhập Công Ty (Nhân Viên)</Text>
+              <Text style={styles.actionBtnText}>Tạo Công Ty Mới</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -103,52 +63,25 @@ const CompanySelection = () => {
         {view === 'create' && (
           <View>
             <TouchableOpacity style={styles.backBtn} onPress={() => setView('menu')}>
-               <Ionicons name="arrow-back" size={20} color="#888" />
-               <Text style={styles.backText}>Quay lại</Text>
+              <Ionicons name="arrow-back" size={20} color="#888" />
+              <Text style={styles.backText}>Quay lại</Text>
             </TouchableOpacity>
-            
+
             <Text style={styles.title}>Tạo Công Ty</Text>
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
-            
+
             <View style={styles.inputContainer}>
               <Text style={styles.label}>Tên công ty của bạn</Text>
-              <TextInput 
-                style={styles.input} 
-                value={companyName} 
-                onChangeText={setCompanyName} 
+              <TextInput
+                style={styles.input}
+                value={companyName}
+                onChangeText={setCompanyName}
                 placeholder="VD: Công ty TNHH ABC..."
               />
             </View>
 
             <TouchableOpacity style={styles.submitBtn} onPress={handleCreate} disabled={loading}>
               {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitBtnText}>Tạo Ngay</Text>}
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {view === 'join' && (
-          <View>
-            <TouchableOpacity style={styles.backBtn} onPress={() => setView('menu')}>
-               <Ionicons name="arrow-back" size={20} color="#888" />
-               <Text style={styles.backText}>Quay lại</Text>
-            </TouchableOpacity>
-            
-            <Text style={styles.title}>Gia Nhập Công Ty</Text>
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-            
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Nhập Mã Công Ty (Join Code)</Text>
-              <TextInput 
-                style={styles.input} 
-                value={joinCode} 
-                onChangeText={setJoinCode} 
-                placeholder="VD: 4FX8A1..."
-                autoCapitalize="characters"
-              />
-            </View>
-
-            <TouchableOpacity style={styles.submitBtn} onPress={handleJoin} disabled={loading}>
-              {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitBtnText}>Xin Gia Nhập</Text>}
             </TouchableOpacity>
           </View>
         )}
@@ -175,6 +108,12 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 5,
   },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 30,
+  },
   greeting: {
     fontSize: 20,
     fontWeight: 'bold',
@@ -184,6 +123,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#666',
     marginBottom: 20,
+    lineHeight: 22,
   },
   actionBtn: {
     flexDirection: 'row',

@@ -10,7 +10,7 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 const EmployeeManagement = () => {
   const { user, company } = useAuth();
   
-  const [viewMode, setViewMode] = useState<'personnel' | 'users' | 'connections' | 'machine'>('personnel');
+  const [viewMode, setViewMode] = useState<'personnel' | 'connections' | 'machine'>('personnel');
   const [searchQuery, setSearchQuery] = useState('');
   
   const [members, setMembers] = useState<any[]>([]);
@@ -28,7 +28,7 @@ const EmployeeManagement = () => {
 
   // Personnel Form
   const [showPersonnelModal, setShowPersonnelModal] = useState(false);
-  const [personnelForm, setPersonnelForm] = useState({ id: null, name: '', department_id: null });
+  const [personnelForm, setPersonnelForm] = useState({ id: null, name: '', email: '', department_id: null });
   const [showDeptInput, setShowDeptInput] = useState(false);
   const [newDeptName, setNewDeptName] = useState('');
   const [showDeptDropdown, setShowDeptDropdown] = useState(false);
@@ -71,17 +71,6 @@ const EmployeeManagement = () => {
     fetchData();
   }, []);
 
-  const handleApprove = async (memberId: string) => {
-    try {
-      await fetch(`${API_URL}/api/boss/members/approve`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: company.company_id, user_id: memberId })
-      });
-      // Optimistic update: flip status to 'active' without full reload
-      setMembers(prev => prev.map(m => m.user_id === memberId ? { ...m, status: 'active' } : m));
-    } catch (err) { console.error(err); }
-  };
-
   const handleChangeRole = async (memberId: string, currentRole: string) => {
     if (!isOwner) return;
     const newRole = currentRole === 'employee' ? 'manager' : 'employee';
@@ -91,39 +80,9 @@ const EmployeeManagement = () => {
         body: JSON.stringify({ company_id: company.company_id, user_id: memberId, role: newRole })
       });
       // Optimistic update: flip role without full reload
-      setMembers(prev => prev.map(m => m.user_id === memberId ? { ...m, role: newRole } : m));
+      setMembers(prev => prev.map(m => String(m.user_id) === String(memberId) ? { ...m, role: newRole } : m));
+      setPersonnel(prev => prev.map(p => String(p.user_id) === String(memberId) ? { ...p, user_role: newRole } : p));
     } catch (err) { console.error(err); }
-  };
-
-  const handleKickMember = async (member: any) => {
-    if (!canManage || member.role !== 'employee' || String(member.user_id) === String(user.id)) return;
-    const name = member.username || member.user_email || 'tài khoản này';
-    if (!confirm(`Bạn có chắc muốn kick ${name} khỏi công ty không?`)) return;
-
-    try {
-      const res = await fetch(`${API_URL}/api/boss/members/${member.user_id}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          company_id: company.company_id,
-          requester_id: user.id,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        alert(data.error || 'Không thể kick tài khoản khỏi công ty');
-        return;
-      }
-
-      setMembers(prev => prev.filter(m => String(m.user_id) !== String(member.user_id)));
-      setPersonnel(prev => prev.map(p => String(p.user_id) === String(member.user_id)
-        ? { ...p, user_id: null, user_username: null, user_email: null }
-        : p
-      ));
-    } catch (err) {
-      console.error(err);
-      alert('Lỗi kết nối máy chủ');
-    }
   };
 
   const handleAddDept = async () => {
@@ -145,24 +104,55 @@ const EmployeeManagement = () => {
 
   const handleSavePersonnel = async () => {
     if (!personnelForm.name.trim()) return;
+    if (!personnelForm.id && !personnelForm.email.trim()) return alert('Vui lòng nhập email nhân viên');
     try {
       const url = personnelForm.id 
         ? `${API_URL}/api/boss/personnel/${personnelForm.id}`
         : `${API_URL}/api/boss/personnel`;
       const method = personnelForm.id ? 'PUT' : 'POST';
       
-      await fetch(url, {
+      const res = await fetch(url, {
         method, headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: company.company_id, name: personnelForm.name, department_id: personnelForm.department_id })
+        body: JSON.stringify({
+          company_id: company.company_id,
+          name: personnelForm.name,
+          email: personnelForm.id ? undefined : personnelForm.email,
+          department_id: personnelForm.department_id,
+        })
       });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Không thể lưu nhân sự');
+        return;
+      }
       setShowPersonnelModal(false);
       fetchData();
     } catch (e) { console.error(e); }
   };
 
-  const handleDeletePersonnel = async (id: string) => {
+  const handleDeletePersonnel = async (person: any) => {
+    const linkedMember = getPersonnelMember(person);
+    const accountRole = person.user_role || linkedMember?.role;
+    const willDeleteAccount = Boolean(person.user_id && accountRole === 'employee');
+    const confirmMessage = willDeleteAccount
+      ? `Bạn có chắc muốn xóa nhân sự ${person.name} và xóa luôn tài khoản nhân viên liên kết không?`
+      : `Bạn có chắc muốn xóa nhân sự ${person.name} khỏi danh sách không?`;
+    if (!confirm(confirmMessage)) return;
+
     try {
-      await fetch(`${API_URL}/api/boss/personnel/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/api/boss/personnel/${person.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: company.company_id, delete_linked_account: true })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Không thể xóa nhân sự');
+        return;
+      }
+      if (data.deletedUserId) {
+        setMembers(prev => prev.filter(m => String(m.user_id) !== String(data.deletedUserId)));
+      }
       fetchData();
     } catch (e) { console.error(e); }
   };
@@ -213,7 +203,7 @@ const EmployeeManagement = () => {
         body: JSON.stringify({ company_id: company.company_id, personnel_id, user_id })
       });
       // Optimistic update: clear user/enno links
-      setPersonnel(prev => prev.map(p => p.id === personnel_id ? { ...p, user_id: null, user_username: null, enno: null } : p));
+      setPersonnel(prev => prev.map(p => p.id === personnel_id ? { ...p, user_id: null, user_username: null, user_email: null, user_role: null, enno: null } : p));
     } catch (e) { console.error(e); }
   };
 
@@ -260,30 +250,61 @@ const EmployeeManagement = () => {
     return <ActivityIndicator size="large" color="#4a72b5" style={{marginTop: 50}} />;
   }
 
+  const getPersonnelMember = (person: any) => {
+    if (!person.user_id) return null;
+    return members.find(m => String(m.user_id) === String(person.user_id)) || null;
+  };
+
   const renderPersonnelView = () => (
     <View style={styles.table}>
       <View style={styles.tableHeader}>
         <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Họ và tên</Text>
         <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Bộ phận</Text>
-        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Trạng thái</Text>
-        <Text style={[styles.cell, {flex: 1, textAlign: 'center', fontWeight: 'bold'}]}>Hành động</Text>
+        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Email</Text>
+        <Text style={[styles.cell, {flex: 1.2, fontWeight: 'bold'}]}>Vai trò</Text>
+        <Text style={[styles.cell, {flex: 1.4, fontWeight: 'bold'}]}>Trạng thái</Text>
+        <Text style={[styles.cell, {flex: 2, textAlign: 'center', fontWeight: 'bold'}]}>Hành động</Text>
       </View>
       {canManage && (
-        <TouchableOpacity style={styles.addBtnRow} onPress={() => { setPersonnelForm({id: null, name: '', department_id: null}); setShowPersonnelModal(true); }}>
+        <TouchableOpacity style={styles.addBtnRow} onPress={() => { setPersonnelForm({id: null, name: '', email: '', department_id: null}); setShowPersonnelModal(true); }}>
           <Ionicons name="add-circle" size={20} color="#4a72b5" />
           <Text style={{color: '#4a72b5', fontWeight: 'bold', marginLeft: 5}}>Thêm nhân sự mới</Text>
         </TouchableOpacity>
       )}
       {(() => {
-        const filtered = personnel.filter(p => !searchQuery || p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.department_name?.toLowerCase().includes(searchQuery.toLowerCase()));
+        const filtered = personnel.filter(p => {
+          const member = getPersonnelMember(p);
+          const accountEmail = p.user_email || member?.user_email;
+          const accountRole = p.user_role || member?.role;
+          return !searchQuery ||
+            p.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            p.department_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            accountEmail?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            accountRole?.toLowerCase().includes(searchQuery.toLowerCase());
+        });
         const paginated = filtered.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
         return (
           <>
-            {paginated.map(p => (
+            {paginated.map(p => {
+              const member = getPersonnelMember(p);
+              const accountUserId = p.user_id || member?.user_id;
+              const accountEmail = p.user_email || member?.user_email;
+              const accountRole = p.user_role || member?.role;
+              return (
               <View key={p.id} style={styles.tableRow}>
                 <Text style={[styles.cell, {flex: 2}]}>{p.name}</Text>
                 <Text style={[styles.cell, {flex: 2}]}>{p.department_name || '-'}</Text>
-                <View style={{flex: 2, flexDirection: 'row', alignItems: 'center'}}>
+                <Text style={[styles.cell, {flex: 2}]}>{accountEmail || '-'}</Text>
+                <View style={{flex: 1.2}}>
+                  {accountRole ? (
+                    <View style={[styles.badge, accountRole === 'owner' ? styles.badgeOwner : accountRole === 'manager' ? styles.badgeManager : styles.badgeEmployee]}>
+                      <Text style={styles.badgeText}>{accountRole}</Text>
+                    </View>
+                  ) : (
+                    <Text style={[styles.cell, {color: '#888'}]}>-</Text>
+                  )}
+                </View>
+                <View style={{flex: 1.4, flexDirection: 'row', alignItems: 'center'}}>
                   <Switch
                     value={p.status === 'active' || p.status === undefined}
                     onValueChange={() => handleToggleStatus(p.id, p.status || 'active')}
@@ -295,78 +316,30 @@ const EmployeeManagement = () => {
                     {(p.status === 'active' || p.status === undefined) ? 'Hoạt động' : 'Nghỉ'}
                   </Text>
                 </View>
-                <View style={{flex: 1, flexDirection: 'row', justifyContent: 'center'}}>
+                <View style={styles.personnelActions}>
                   {canManage && (
                     <>
-                      <TouchableOpacity onPress={() => { setPersonnelForm({id: p.id, name: p.name, department_id: p.department_id}); setShowPersonnelModal(true); }} style={{marginRight: 10}}>
-                        <Ionicons name="pencil" size={18} color="#4a72b5" />
-                      </TouchableOpacity>
-                      <TouchableOpacity onPress={() => handleDeletePersonnel(p.id)}>
-                        <Ionicons name="trash" size={18} color="#f28baf" />
-                      </TouchableOpacity>
+                      <View style={styles.roleActionSlot}>
+                        {isOwner && accountUserId && accountRole && accountRole !== 'owner' && (
+                          <TouchableOpacity style={[styles.actionBtn, {backgroundColor: '#eee'}]} onPress={() => handleChangeRole(accountUserId, accountRole)}>
+                            <Text style={[styles.actionText, {color: '#555'}]}>{accountRole === 'employee' ? 'Lên quản lý' : 'Hạ xuống NV'}</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                      <View style={styles.iconActionSlot}>
+                        <TouchableOpacity style={styles.iconActionBtn} onPress={() => { setPersonnelForm({id: p.id, name: p.name, email: '', department_id: p.department_id}); setShowPersonnelModal(true); }}>
+                          <Ionicons name="pencil" size={18} color="#4a72b5" />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.iconActionBtn} onPress={() => handleDeletePersonnel(p)}>
+                          <Ionicons name="trash" size={18} color="#f28baf" />
+                        </TouchableOpacity>
+                      </View>
                     </>
                   )}
                 </View>
               </View>
-            ))}
-            <Pagination 
-              currentPage={currentPage} 
-              totalPages={Math.ceil(filtered.length / ITEMS_PER_PAGE)} 
-              onPageChange={setCurrentPage} 
-            />
-          </>
-        );
-      })()}
-    </View>
-  );
-
-  const renderUsersView = () => (
-    <View style={styles.table}>
-      <View style={styles.tableHeader}>
-        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Email / Tài khoản</Text>
-        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Tên nhân viên</Text>
-        <Text style={[styles.cell, {flex: 1, fontWeight: 'bold'}]}>Vai trò</Text>
-        <Text style={[styles.cell, {flex: 1, fontWeight: 'bold'}]}>Trạng thái</Text>
-        <Text style={[styles.cell, {flex: 2, textAlign: 'center', fontWeight: 'bold'}]}>Hành động</Text>
-      </View>
-      {(() => {
-        const filtered = members.filter(m => !searchQuery || m.username?.toLowerCase().includes(searchQuery.toLowerCase()) || m.user_email?.toLowerCase().includes(searchQuery.toLowerCase()) || m.role?.toLowerCase().includes(searchQuery.toLowerCase()));
-        const paginated = filtered.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
-        return (
-          <>
-            {paginated.map(m => (
-              <View key={m.user_id} style={styles.tableRow}>
-                <Text style={[styles.cell, {flex: 2}]}>{m.user_email || 'N/A'} {m.user_id === user.id ? '(Bạn)' : ''}</Text>
-                <Text style={[styles.cell, {flex: 2}]}>{m.username}</Text>
-                <View style={{flex: 1}}>
-                  <View style={[styles.badge, m.role === 'owner' ? styles.badgeOwner : m.role === 'manager' ? styles.badgeManager : styles.badgeEmployee]}>
-                    <Text style={styles.badgeText}>{m.role}</Text>
-                  </View>
-                </View>
-                <View style={{flex: 1}}>
-                  <Text style={{color: m.status === 'active' ? '#4a72b5' : '#ffa500', fontWeight: 'bold'}}>
-                    {m.status === 'active' ? 'Đã duyệt' : 'Chờ duyệt'}
-                  </Text>
-                </View>
-                <View style={{flex: 2, flexDirection: 'row', justifyContent: 'center', gap: 8}}>
-                  {m.status === 'pending' && (
-                    <TouchableOpacity style={styles.actionBtn} onPress={() => handleApprove(m.user_id)}>
-                      <Text style={styles.actionText}>Duyệt</Text>
-                    </TouchableOpacity>
-                  )}
-                  {isOwner && m.role !== 'owner' && m.status === 'active' && (
-                    <TouchableOpacity style={[styles.actionBtn, {backgroundColor: '#eee'}]} onPress={() => handleChangeRole(m.user_id, m.role)}>
-                      <Text style={[styles.actionText, {color: '#555'}]}>{m.role === 'employee' ? 'Lên quản lý' : 'Hạ xuống NV'}</Text>
-                    </TouchableOpacity>
-                  )}
-                  {canManage && m.role === 'employee' && m.user_id !== user.id && (
-                    <TouchableOpacity onPress={() => handleKickMember(m)}>
-                        <Ionicons name="trash" size={18} color="#f28baf" />
-                      </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-            ))}
+              );
+            })}
             <Pagination 
               currentPage={currentPage} 
               totalPages={Math.ceil(filtered.length / ITEMS_PER_PAGE)} 
@@ -548,28 +521,12 @@ const EmployeeManagement = () => {
           <Text style={styles.title}>Quản lý Nhân viên</Text>
           <Text style={styles.subtitle}>Tổ chức và liên kết nhân sự, tài khoản</Text>
         </View>
-        <TouchableOpacity 
-          style={{backgroundColor: '#e2ecd2', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#c4d7a8'}}
-          onPress={() => {
-            if (navigator && navigator.clipboard) {
-              navigator.clipboard.writeText(company.join_code);
-              alert('Đã copy code: ' + company.join_code);
-            } else {
-              alert('Code của bạn là: ' + company.join_code);
-            }
-          }}
-        >
-          <Text style={{color: '#5e802b', fontWeight: 'bold'}}>Lấy Code: {company.join_code}</Text>
-        </TouchableOpacity>
       </View>
 
       {/* Tabs */}
       <View style={styles.tabsContainer}>
         <TouchableOpacity style={[styles.tabBtn, viewMode === 'personnel' && styles.tabBtnActive]} onPress={() => setViewMode('personnel')}>
           <Text style={[styles.tabText, viewMode === 'personnel' && styles.tabTextActive]}>Danh sách nhân sự</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.tabBtn, viewMode === 'users' && styles.tabBtnActive]} onPress={() => setViewMode('users')}>
-          <Text style={[styles.tabText, viewMode === 'users' && styles.tabTextActive]}>Tài khoản NV</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.tabBtn, viewMode === 'machine' && styles.tabBtnActive]} onPress={() => setViewMode('machine')}>
           <Text style={[styles.tabText, viewMode === 'machine' && styles.tabTextActive]}>Máy chấm công</Text>
@@ -589,7 +546,6 @@ const EmployeeManagement = () => {
       </View>
 
       {viewMode === 'personnel' && renderPersonnelView()}
-      {viewMode === 'users' && renderUsersView()}
       {viewMode === 'connections' && renderConnectionsView()}
       {viewMode === 'machine' && renderMachineEmployeesView()}
 
@@ -606,6 +562,20 @@ const EmployeeManagement = () => {
               onChangeText={t => setPersonnelForm({...personnelForm, name: t})}
               placeholder="Nhập họ và tên..."
             />
+
+            {!personnelForm.id && (
+              <>
+                <Text style={styles.label}>Email</Text>
+                <TextInput
+                  style={styles.modalInput}
+                  value={personnelForm.email}
+                  onChangeText={t => setPersonnelForm({...personnelForm, email: t})}
+                  placeholder="Nhập email nhân viên..."
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                />
+              </>
+            )}
 
             <Text style={styles.label}>Bộ phận</Text>
             <View style={{position: 'relative', zIndex: 100}}>
@@ -744,7 +714,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#4a72b5',
   },
   badgeEmployee: {
-    backgroundColor: '#e2ecd2',
+    backgroundColor: '#4caf50',
   },
   badgeText: {
     fontSize: 12,
@@ -781,7 +751,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 6,
-    marginLeft: 5,
+  },
+  personnelActions: {
+    flex: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  roleActionSlot: {
+    width: 112,
+    alignItems: 'flex-end',
+  },
+  iconActionSlot: {
+    width: 62,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  iconActionBtn: {
+    width: 24,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   actionText: {
     color: '#fff',

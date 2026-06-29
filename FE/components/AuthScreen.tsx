@@ -78,6 +78,12 @@ const AuthScreen = () => {
 
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
         {info ? <Text style={styles.infoText}>{info}</Text> : null}
+        {!isLogin && (
+          <View style={styles.ownerNote}>
+            <Ionicons name="business-outline" size={16} color="#4a72b5" />
+            <Text style={styles.ownerNoteText}>Dành riêng cho chủ doanh nghiệp</Text>
+          </View>
+        )}
 
         <View style={styles.inputContainer}>
           <Text style={styles.label}>Email</Text>
@@ -224,6 +230,22 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     textAlign: 'center',
     fontWeight: '500',
+  },
+  ownerNote: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f0f4fa',
+    borderColor: '#dbe6f5',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 15,
+  },
+  ownerNoteText: {
+    color: '#3b5e98',
+    fontSize: 13,
+    fontWeight: '700',
   }
 });
 
