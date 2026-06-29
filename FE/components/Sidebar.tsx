@@ -3,9 +3,11 @@ import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation, useNavigationState } from '@react-navigation/native';
+import { useCompanyNotifications } from './NotificationCenter';
 
 const Sidebar = () => {
   const { user, company, logout } = useAuth();
+  const { unreadCount, markAllAsRead } = useCompanyNotifications();
   const navigation = useNavigation<any>();
 
   // Subscribe to navigation state changes so Sidebar re-renders immediately
@@ -33,6 +35,31 @@ const Sidebar = () => {
       </View>
 
       <View style={styles.menuContainer}>
+        <TouchableOpacity
+          style={[styles.notificationItem, activeTab === 'notifications' && styles.notificationItemActive]}
+          onPress={() => {
+            markAllAsRead();
+            navigation.navigate('Dashboard', { screen: 'Notifications' });
+          }}
+        >
+          <View style={styles.notificationIconBox}>
+            <Ionicons name="notifications-outline" size={22} color={activeTab === 'notifications' ? '#fff' : '#4a72b5'} />
+          </View>
+          <View style={styles.notificationTextWrap}>
+            <Text style={[styles.notificationTitle, activeTab === 'notifications' && styles.notificationTitleActive]}>Thông báo</Text>
+            <Text style={[styles.notificationSubtitle, activeTab === 'notifications' && styles.notificationSubtitleActive]}>
+              {unreadCount > 0 ? `${unreadCount} cập nhật mới` : 'Cập nhật chung'}
+            </Text>
+          </View>
+          {unreadCount > 0 && (
+            <View style={[styles.notificationBadge, activeTab === 'notifications' && styles.notificationBadgeActive]}>
+              <Text style={[styles.notificationBadgeText, activeTab === 'notifications' && styles.notificationBadgeTextActive]}>
+                {unreadCount > 99 ? '99+' : unreadCount}
+              </Text>
+            </View>
+          )}
+        </TouchableOpacity>
+
         <TouchableOpacity 
           style={[styles.menuItem, activeTab === 'calendar' && styles.menuItemActive]}
           onPress={() => navigation.navigate('Dashboard', { screen: 'Calendar' })}
@@ -142,6 +169,73 @@ const styles = StyleSheet.create({
   },
   menuContainer: {
     flex: 1,
+  },
+  notificationItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    backgroundColor: '#f8fbff',
+  },
+  notificationItemActive: {
+    backgroundColor: '#4a72b5',
+    borderColor: '#4a72b5',
+    shadowColor: '#4a72b5',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  notificationIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  notificationTextWrap: {
+    flex: 1,
+  },
+  notificationTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#1f2937',
+  },
+  notificationTitleActive: {
+    color: '#fff',
+  },
+  notificationSubtitle: {
+    marginTop: 2,
+    fontSize: 12,
+    color: '#64748b',
+  },
+  notificationSubtitleActive: {
+    color: '#e0ecff',
+  },
+  notificationBadge: {
+    minWidth: 24,
+    height: 22,
+    borderRadius: 11,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#dc2626',
+  },
+  notificationBadgeActive: {
+    backgroundColor: '#fff',
+  },
+  notificationBadgeText: {
+    fontSize: 11,
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  notificationBadgeTextActive: {
+    color: '#4a72b5',
   },
   menuItem: {
     flexDirection: 'row',

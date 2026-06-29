@@ -13,11 +13,64 @@ app.use(cors());
 app.use(express.json());
 
 const upload = multer({ dest: 'uploads/' });
+const sseClients = new Map();
+
+const addSseClient = (companyId, res) => {
+  const key = String(companyId);
+  if (!sseClients.has(key)) sseClients.set(key, new Set());
+  sseClients.get(key).add(res);
+};
+
+const removeSseClient = (companyId, res) => {
+  const key = String(companyId);
+  const clients = sseClients.get(key);
+  if (!clients) return;
+  clients.delete(res);
+  if (clients.size === 0) sseClients.delete(key);
+};
+
+const toNotificationPayload = (row) => ({
+  id: String(row.id),
+  companyId: row.company_id,
+  type: row.type,
+  title: row.title,
+  message: row.message,
+  actorId: row.actor_id,
+  data: row.data || {},
+  createdAt: row.created_at,
+});
+
+const emitCompanyEvent = async (companyId, event) => {
+  const saved = await db.query(
+    `
+      INSERT INTO Notifications (company_id, type, title, message, actor_id, data)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *
+    `,
+    [
+      companyId,
+      event.type,
+      event.title,
+      event.message,
+      event.actorId || null,
+      JSON.stringify(event.data || {}),
+    ]
+  );
+  const payload = JSON.stringify(toNotificationPayload(saved.rows[0]));
+  const clients = sseClients.get(String(companyId));
+  if (!clients || clients.size === 0) return;
+
+  clients.forEach(client => {
+    client.write(`event: notification\n`);
+    client.write(`data: ${payload}\n\n`);
+  });
+};
 
 const getMemberships = async (userId) => {
   const result = await db.query(`
     SELECT cm.company_id, c.name as company_name, c.join_code, c.work_start_time, c.work_end_time,
-           c.max_leave_days, cm.role, cm.status, cm.linked_enno
+           c.max_leave_days, c.leave_request_deadline_days, c.leave_request_deadline_hours,
+           cm.role, cm.status, cm.linked_enno
     FROM CompanyMembers cm
     JOIN Companies c ON c.id = cm.company_id
     WHERE cm.user_id = $1
@@ -200,7 +253,7 @@ const sendVerificationEmail = async (email, username, token) => {
 
 const getBearerToken = (req) => {
   const header = req.headers.authorization || '';
-  return header.startsWith('Bearer ') ? header.slice(7) : null;
+  return header.startsWith('Bearer ') ? header.slice(7) : req.query.token || null;
 };
 
 // --- AUTH API ---
@@ -327,6 +380,188 @@ app.delete('/api/session', async (req, res) => {
   res.json({ success: true });
 });
 
+app.get('/api/notifications/stream', async (req, res) => {
+  const token = getBearerToken(req);
+  const { company_id } = req.query;
+  if (!token || !company_id) return res.status(400).json({ error: 'Missing token or company_id' });
+
+  try {
+    const session = await db.query('SELECT user_id FROM Sessions WHERE token = $1', [token]);
+    if (session.rows.length === 0) return res.status(401).json({ error: 'Invalid session token' });
+
+    const member = await db.query(
+      'SELECT id FROM CompanyMembers WHERE user_id = $1 AND company_id = $2',
+      [session.rows[0].user_id, company_id]
+    );
+    if (member.rows.length === 0) return res.status(403).json({ error: 'Forbidden' });
+
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    res.write(`event: connected\n`);
+    res.write(`data: ${JSON.stringify({ ok: true })}\n\n`);
+
+    addSseClient(company_id, res);
+    const heartbeat = setInterval(() => {
+      res.write(`: heartbeat\n\n`);
+    }, 25000);
+
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      removeSseClient(company_id, res);
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.get('/api/notifications', async (req, res) => {
+  const token = getBearerToken(req);
+  const { company_id, limit = 50 } = req.query;
+  if (!token || !company_id) return res.status(400).json({ error: 'Missing token or company_id' });
+
+  try {
+    const session = await db.query('SELECT user_id FROM Sessions WHERE token = $1', [token]);
+    if (session.rows.length === 0) return res.status(401).json({ error: 'Invalid session token' });
+
+    const member = await db.query(
+      'SELECT id FROM CompanyMembers WHERE user_id = $1 AND company_id = $2',
+      [session.rows[0].user_id, company_id]
+    );
+    if (member.rows.length === 0) return res.status(403).json({ error: 'Forbidden' });
+
+    const latest = await db.query(
+      'SELECT COALESCE(MAX(id), 0)::int AS latest_id FROM Notifications WHERE company_id = $1',
+      [company_id]
+    );
+    const latestId = latest.rows[0]?.latest_id || 0;
+    const readState = await db.query(
+      'SELECT last_read_notification_id FROM NotificationReadStates WHERE user_id = $1 AND company_id = $2',
+      [session.rows[0].user_id, company_id]
+    );
+    let lastReadNotificationId = readState.rows[0]?.last_read_notification_id;
+    if (lastReadNotificationId === undefined) {
+      lastReadNotificationId = latestId;
+      await db.query(
+        `
+          INSERT INTO NotificationReadStates (user_id, company_id, last_read_notification_id, updated_at)
+          VALUES ($1, $2, $3, NOW())
+          ON CONFLICT (user_id, company_id) DO NOTHING
+        `,
+        [session.rows[0].user_id, company_id, latestId]
+      );
+    }
+    const unread = await db.query(
+      'SELECT COUNT(*)::int AS unread_count FROM Notifications WHERE company_id = $1 AND id > $2',
+      [company_id, lastReadNotificationId]
+    );
+    const result = await db.query(
+      `
+        SELECT *
+        FROM Notifications
+        WHERE company_id = $1
+        ORDER BY id DESC
+        LIMIT $2
+      `,
+      [company_id, Math.min(parseInt(limit, 10) || 50, 100)]
+    );
+    res.json({
+      notifications: result.rows.map(toNotificationPayload),
+      unreadCount: unread.rows[0]?.unread_count || 0,
+      lastReadNotificationId,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/notifications/read', async (req, res) => {
+  const token = getBearerToken(req);
+  const { company_id } = req.body;
+  if (!token || !company_id) return res.status(400).json({ error: 'Missing token or company_id' });
+
+  try {
+    const session = await db.query('SELECT user_id FROM Sessions WHERE token = $1', [token]);
+    if (session.rows.length === 0) return res.status(401).json({ error: 'Invalid session token' });
+
+    const member = await db.query(
+      'SELECT id FROM CompanyMembers WHERE user_id = $1 AND company_id = $2',
+      [session.rows[0].user_id, company_id]
+    );
+    if (member.rows.length === 0) return res.status(403).json({ error: 'Forbidden' });
+
+    const latest = await db.query('SELECT COALESCE(MAX(id), 0)::int AS latest_id FROM Notifications WHERE company_id = $1', [company_id]);
+    const latestId = latest.rows[0]?.latest_id || 0;
+    await db.query(
+      `
+        INSERT INTO NotificationReadStates (user_id, company_id, last_read_notification_id, updated_at)
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (user_id, company_id)
+        DO UPDATE SET last_read_notification_id = EXCLUDED.last_read_notification_id, updated_at = NOW()
+      `,
+      [session.rows[0].user_id, company_id, latestId]
+    );
+
+    res.json({ success: true, unreadCount: 0, lastReadNotificationId: latestId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/notifications/custom', async (req, res) => {
+  const token = getBearerToken(req);
+  const { company_id, title, message } = req.body;
+  const cleanTitle = String(title || '').trim();
+  const cleanMessage = String(message || '').trim();
+  if (!token || !company_id || !cleanTitle || !cleanMessage) {
+    return res.status(400).json({ error: 'Thiếu tiêu đề hoặc nội dung thông báo' });
+  }
+
+  try {
+    const session = await db.query('SELECT user_id FROM Sessions WHERE token = $1', [token]);
+    if (session.rows.length === 0) return res.status(401).json({ error: 'Invalid session token' });
+
+    const member = await db.query(
+      `
+        SELECT cm.role, cm.status, u.username
+        FROM CompanyMembers cm
+        JOIN Users u ON u.id = cm.user_id
+        WHERE cm.user_id = $1 AND cm.company_id = $2
+      `,
+      [session.rows[0].user_id, company_id]
+    );
+    if (
+      member.rows.length === 0 ||
+      member.rows[0].status !== 'active' ||
+      !['owner', 'manager'].includes(member.rows[0].role)
+    ) {
+      return res.status(403).json({ error: 'Không có quyền tạo thông báo công ty' });
+    }
+
+    await emitCompanyEvent(company_id, {
+      type: 'custom_announcement',
+      title: cleanTitle,
+      message: cleanMessage,
+      actorId: session.rows[0].user_id,
+      data: {
+        author_name: member.rows[0].username || 'Người quản lý',
+        author_role: member.rows[0].role,
+      },
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 app.put('/api/users/profile', async (req, res) => {
   const { user_id, username, current_password, new_password } = req.body;
   if (!user_id) return res.status(400).json({ error: 'Missing user_id' });
@@ -447,7 +682,17 @@ app.post('/api/users/selected-company', async (req, res) => {
 
 // --- COMPANY SETTINGS API ---
 app.put('/api/boss/settings', async (req, res) => {
-  const { company_id, user_id, work_start_time, work_end_time, max_leave_days } = req.body;
+  const {
+    company_id,
+    user_id,
+    work_start_time,
+    work_end_time,
+    max_leave_days,
+    leave_request_deadline_days,
+    leave_request_deadline_hours,
+  } = req.body;
+  const deadlineDays = Math.max(0, parseInt(leave_request_deadline_days, 10) || 0);
+  const deadlineHours = Math.max(0, parseInt(leave_request_deadline_hours, 10) || 0);
   try {
     // Verify owner role
     const memberCheck = await db.query('SELECT role FROM CompanyMembers WHERE company_id = $1 AND user_id = $2', [company_id, user_id]);
@@ -456,10 +701,32 @@ app.put('/api/boss/settings', async (req, res) => {
     }
 
     await db.query(
-      'UPDATE Companies SET work_start_time = $1, work_end_time = $2, max_leave_days = $3 WHERE id = $4',
-      [work_start_time, work_end_time, max_leave_days, company_id]
+      `
+        UPDATE Companies
+        SET work_start_time = $1,
+            work_end_time = $2,
+            max_leave_days = $3,
+            leave_request_deadline_days = $4,
+            leave_request_deadline_hours = $5
+        WHERE id = $6
+      `,
+      [work_start_time, work_end_time, max_leave_days, deadlineDays, deadlineHours, company_id]
     );
     const state = await buildUserState(user_id);
+    await emitCompanyEvent(company_id, {
+      type: 'company_settings_changed',
+      title: 'Cài đặt công ty đã thay đổi',
+      message: 'Quy định làm việc của công ty đã được cập nhật.',
+      actorId: user_id,
+      data: {
+        work_start_time,
+        work_end_time,
+        work_hours_label: `${String(work_start_time).slice(0, 5)} - ${String(work_end_time).slice(0, 5)}`,
+        max_leave_days,
+        leave_request_deadline_days: deadlineDays,
+        leave_request_deadline_hours: deadlineHours,
+      },
+    });
     res.json({ success: true, ...state });
   } catch (err) {
     console.error(err);
@@ -488,6 +755,15 @@ app.post('/api/boss/members/approve', async (req, res) => {
   const { company_id, user_id } = req.body;
   try {
     await db.query('UPDATE CompanyMembers SET status = $1 WHERE company_id = $2 AND user_id = $3', ['active', company_id, user_id]);
+    const approvedUser = await db.query('SELECT username, email FROM Users WHERE id = $1', [user_id]);
+    const username = approvedUser.rows[0]?.username || `User #${user_id}`;
+    await emitCompanyEvent(company_id, {
+      type: 'member_approved',
+      title: 'Tài khoản nhân viên mới đã được duyệt',
+      message: `${username} đã được duyệt vào công ty.`,
+      actorId: user_id,
+      data: { user_id, username, email: approvedUser.rows[0]?.email || null },
+    });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -501,6 +777,89 @@ app.post('/api/boss/members/role', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.delete('/api/boss/members/:user_id', async (req, res) => {
+  const { user_id } = req.params;
+  const { company_id, requester_id } = req.body;
+  if (!company_id || !requester_id || !user_id) {
+    return res.status(400).json({ error: 'Missing company_id, requester_id or user_id' });
+  }
+  if (String(user_id) === String(requester_id)) {
+    return res.status(400).json({ error: 'Không thể tự kick chính mình khỏi công ty' });
+  }
+
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const requester = await client.query(
+      'SELECT role, status FROM CompanyMembers WHERE company_id = $1 AND user_id = $2',
+      [company_id, requester_id]
+    );
+    if (
+      requester.rows.length === 0 ||
+      requester.rows[0].status !== 'active' ||
+      !['owner', 'manager'].includes(requester.rows[0].role)
+    ) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Không có quyền kick tài khoản khỏi công ty' });
+    }
+
+    const target = await client.query(
+      `
+        SELECT cm.user_id, cm.role, cm.status, u.username, u.email
+        FROM CompanyMembers cm
+        JOIN Users u ON u.id = cm.user_id
+        WHERE cm.company_id = $1 AND cm.user_id = $2
+      `,
+      [company_id, user_id]
+    );
+    if (target.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Tài khoản không thuộc công ty này' });
+    }
+    if (target.rows[0].role !== 'employee') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Chỉ có thể kick tài khoản nhân viên' });
+    }
+
+    await client.query(
+      'UPDATE Personnel SET user_id = NULL WHERE company_id = $1 AND user_id = $2',
+      [company_id, user_id]
+    );
+    await client.query(
+      'DELETE FROM CompanyMembers WHERE company_id = $1 AND user_id = $2',
+      [company_id, user_id]
+    );
+    await client.query(
+      'UPDATE Users SET selected_company_id = NULL WHERE id = $1 AND selected_company_id = $2',
+      [user_id, company_id]
+    );
+
+    await client.query('COMMIT');
+
+    const username = target.rows[0].username || `User #${user_id}`;
+    try {
+      await emitCompanyEvent(company_id, {
+        type: 'member_removed',
+        title: 'Tài khoản nhân viên đã bị kick khỏi công ty',
+        message: `${username} đã bị xóa khỏi danh sách tài khoản của công ty.`,
+        actorId: requester_id,
+        data: { user_id, username, email: target.rows[0].email || null },
+      });
+    } catch (notifyErr) {
+      console.error('Member removal notification failed:', notifyErr);
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 });
 
@@ -561,7 +920,21 @@ app.post('/api/boss/personnel', async (req, res) => {
       'INSERT INTO Personnel (company_id, name, department_id) VALUES ($1, $2, $3) RETURNING *',
       [company_id, name, department_id || null]
     );
-    res.json({ success: true, personnel: result.rows[0] });
+    const department = department_id
+      ? await db.query('SELECT name FROM Departments WHERE id = $1 AND company_id = $2', [department_id, company_id])
+      : { rows: [] };
+    const departmentName = department.rows[0]?.name || 'Chưa có bộ phận';
+    const personnelPayload = {
+      ...result.rows[0],
+      department_name: departmentName,
+    };
+    await emitCompanyEvent(company_id, {
+      type: 'personnel_created',
+      title: 'Nhân sự mới đã được thêm',
+      message: `${result.rows[0].name} đã được thêm vào danh sách nhân sự.`,
+      data: personnelPayload,
+    });
+    res.json({ success: true, personnel: personnelPayload });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -842,6 +1215,23 @@ const notifyManagersAboutLeave = async (leaveRequest) => {
 };
 
 // --- LEAVE API ---
+const getLeaveSubmissionDeadline = (leaveDate, daysBefore = 0, hoursBefore = 0) => {
+  const advanceMs = ((Number(daysBefore) || 0) * 24 + (Number(hoursBefore) || 0)) * 60 * 60 * 1000;
+  if (advanceMs <= 0) return null;
+
+  const leaveStart = new Date(`${leaveDate}T00:00:00`);
+  if (Number.isNaN(leaveStart.getTime())) return 'invalid';
+  return new Date(leaveStart.getTime() - advanceMs);
+};
+
+const formatDateTime = (dateValue) => dateValue.toLocaleString('vi-VN', {
+  hour: '2-digit',
+  minute: '2-digit',
+  day: '2-digit',
+  month: '2-digit',
+  year: 'numeric',
+});
+
 app.post('/api/leave', async (req, res) => {
   const { user_id, company_id, date, reason, leave_type, submitter_role } = req.body;
   const normalizedLeaveType = leave_type || 'Nghỉ phép';
@@ -856,9 +1246,27 @@ app.post('/api/leave', async (req, res) => {
     const actualSubmitterRole = member.rows[0].role;
     const approval_status = actualSubmitterRole === 'owner' || normalizedLeaveType === 'Nghỉ phép' ? 'approved' : 'pending';
 
+    const companySettings = await db.query(
+      'SELECT max_leave_days, leave_request_deadline_days, leave_request_deadline_hours FROM Companies WHERE id = $1',
+      [company_id]
+    );
+    const settings = companySettings.rows[0] || {};
+    const submitDeadline = getLeaveSubmissionDeadline(
+      date,
+      settings.leave_request_deadline_days || 0,
+      settings.leave_request_deadline_hours || 0
+    );
+    if (submitDeadline === 'invalid') {
+      return res.status(400).json({ error: 'Ngày nghỉ không hợp lệ' });
+    }
+    if (submitDeadline && new Date() > submitDeadline) {
+      return res.status(400).json({
+        error: `Đã quá hạn gửi đơn. Đơn cho ngày ${date} phải được gửi muộn nhất lúc ${formatDateTime(submitDeadline)}.`,
+      });
+    }
+
     if (normalizedLeaveType === 'Nghỉ phép') {
-      const quota = await db.query('SELECT max_leave_days FROM Companies WHERE id = $1', [company_id]);
-      const maxLeaveDays = quota.rows[0]?.max_leave_days || 12;
+      const maxLeaveDays = settings.max_leave_days || 12;
       const used = await db.query(`
         SELECT COUNT(*)::int AS used_days
         FROM LeaveRequests
@@ -877,6 +1285,20 @@ app.post('/api/leave', async (req, res) => {
       'INSERT INTO LeaveRequests (user_id, company_id, date, reason, leave_type, approval_status, submitter_role) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
       [user_id, company_id, date, reason, normalizedLeaveType, approval_status, actualSubmitterRole]
     );
+    const submitter = await db.query('SELECT username, email FROM Users WHERE id = $1', [user_id]);
+    const submitterName = submitter.rows[0]?.username || `User #${user_id}`;
+
+    await emitCompanyEvent(company_id, {
+      type: 'leave_request_created',
+      title: 'Có đơn nghỉ phép mới',
+      message: `${submitterName} vừa tạo đơn ${normalizedLeaveType} ngày ${date}.`,
+      actorId: user_id,
+      data: {
+        ...inserted.rows[0],
+        username: submitterName,
+        email: submitter.rows[0]?.email || null,
+      },
+    });
 
     try {
       await notifyManagersAboutLeave(inserted.rows[0]);

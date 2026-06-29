@@ -8,6 +8,7 @@ import LeaveManagement from '../components/LeaveManagement';
 import StatisticsView from '../components/StatisticsView';
 import SettingsView from '../components/SettingsView';
 import ProfileSettingsView from '../components/ProfileSettingsView';
+import NotificationCenter, { NotificationProvider } from '../components/NotificationCenter';
 import { useAuth } from '../context/AuthContext';
 
 const Stack = createNativeStackNavigator();
@@ -32,26 +33,29 @@ const DashboardLayout = () => {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
-        <Sidebar />
-        <View style={styles.mainContent}>
-          <ScrollView contentContainerStyle={styles.scrollContent}>
-            <Stack.Navigator
-              id="DashboardStack"
-              screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#fff' } }}
-            >
-              <Stack.Screen name="Calendar" component={CalendarView} />
-              <Stack.Screen name="Employees" component={EmployeeManagement} />
-              <Stack.Screen name="Leave" component={LeaveManagement} />
-              <Stack.Screen name="Statistics" component={StatisticsView} />
-              <Stack.Screen name="Settings" component={SettingsView} />
-              <Stack.Screen name="ProfileSettings" component={ProfileSettingsView} />
-            </Stack.Navigator>
-          </ScrollView>
+    <NotificationProvider>
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.container}>
+          <Sidebar />
+          <View style={styles.mainContent}>
+            <ScrollView contentContainerStyle={styles.scrollContent}>
+              <Stack.Navigator
+                id="DashboardStack"
+                screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#fff' } }}
+              >
+                <Stack.Screen name="Calendar" component={CalendarView} />
+                <Stack.Screen name="Employees" component={EmployeeManagement} />
+                <Stack.Screen name="Leave" component={LeaveManagement} />
+                <Stack.Screen name="Statistics" component={StatisticsView} />
+                <Stack.Screen name="Notifications" component={NotificationCenter} />
+                <Stack.Screen name="Settings" component={SettingsView} />
+                <Stack.Screen name="ProfileSettings" component={ProfileSettingsView} />
+              </Stack.Navigator>
+            </ScrollView>
+          </View>
         </View>
-      </View>
-    </SafeAreaView>
+      </SafeAreaView>
+    </NotificationProvider>
   );
 };
 

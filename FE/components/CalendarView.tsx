@@ -28,8 +28,11 @@ const CalendarView = () => {
     return (h || 0) * 3600 + (m || 0) * 60 + (s || 0);
   };
 
+  const formatWorkTime = (timeStr: string) => (timeStr || '00:00:00').slice(0, 5);
+
   const workStartSeconds = timeToSeconds(company.work_start_time || '09:00:00');
   const workEndSeconds = timeToSeconds(company.work_end_time || '18:00:00');
+  const workTimeLabel = `${formatWorkTime(company.work_start_time || '09:00:00')} - ${formatWorkTime(company.work_end_time || '18:00:00')}`;
 
   const fetchData = async () => {
     try {
@@ -459,6 +462,14 @@ const CalendarView = () => {
               <Ionicons name="chevron-forward" size={16} color="#888" />
             </TouchableOpacity>
           </View>
+
+          <View style={styles.workHoursBox}>
+            <Ionicons name="time-outline" size={17} color="#4a72b5" />
+            <View>
+              <Text style={styles.workHoursLabel}>Giờ hành chính</Text>
+              <Text style={styles.workHoursValue}>{workTimeLabel}</Text>
+            </View>
+          </View>
         </View>
       )}
 
@@ -511,9 +522,10 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'flex-start',
+    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 20,
+    gap: 12,
   },
   weekNav: {
     flexDirection: 'row',
@@ -529,6 +541,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
     color: '#000',
+  },
+  workHoursBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f8fbff',
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  workHoursLabel: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  workHoursValue: {
+    marginTop: 1,
+    fontSize: 13,
+    color: '#1f2937',
+    fontWeight: 'bold',
   },
   filterPill: {
     paddingVertical: 6,

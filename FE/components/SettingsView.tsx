@@ -83,6 +83,8 @@ const SettingsView = () => {
   const [startTime, setStartTime] = useState(company?.work_start_time || '09:00:00');
   const [endTime, setEndTime] = useState(company?.work_end_time || '18:00:00');
   const [maxLeave, setMaxLeave] = useState(company?.max_leave_days?.toString() || '12');
+  const [deadlineDays, setDeadlineDays] = useState(company?.leave_request_deadline_days?.toString() || '0');
+  const [deadlineHours, setDeadlineHours] = useState(company?.leave_request_deadline_hours?.toString() || '0');
 
   const [loading, setLoading] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState<{visible: boolean, field: 'start'|'end'}>({visible: false, field: 'start'});
@@ -98,7 +100,9 @@ const SettingsView = () => {
           user_id: user.id,
           work_start_time: startTime,
           work_end_time: endTime,
-          max_leave_days: parseInt(maxLeave) || 12
+          max_leave_days: parseInt(maxLeave) || 12,
+          leave_request_deadline_days: parseInt(deadlineDays) || 0,
+          leave_request_deadline_hours: parseInt(deadlineHours) || 0
         })
       });
       const data = await res.json();
@@ -171,6 +175,32 @@ const SettingsView = () => {
             />
           </View>
         </View>
+
+        <View style={[styles.formRow, { marginTop: 18 }]}>
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Phải gửi đơn trước (Ngày)</Text>
+            <TextInput
+              style={styles.input}
+              value={deadlineDays}
+              onChangeText={setDeadlineDays}
+              keyboardType="numeric"
+              placeholder="Ví dụ: 1"
+            />
+          </View>
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Phải gửi đơn trước (Giờ)</Text>
+            <TextInput
+              style={styles.input}
+              value={deadlineHours}
+              onChangeText={setDeadlineHours}
+              keyboardType="numeric"
+              placeholder="Ví dụ: 4"
+            />
+          </View>
+        </View>
+        <Text style={styles.helpText}>
+          Ví dụ: 1 ngày 4 giờ nghĩa là đơn cho một ngày nghỉ phải gửi muộn nhất trước 00:00 của ngày đó 1 ngày 4 giờ.
+        </Text>
 
         <View style={styles.actions}>
           <TouchableOpacity 

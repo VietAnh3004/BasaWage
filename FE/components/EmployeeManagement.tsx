@@ -95,6 +95,37 @@ const EmployeeManagement = () => {
     } catch (err) { console.error(err); }
   };
 
+  const handleKickMember = async (member: any) => {
+    if (!canManage || member.role !== 'employee' || String(member.user_id) === String(user.id)) return;
+    const name = member.username || member.user_email || 'tài khoản này';
+    if (!confirm(`Bạn có chắc muốn kick ${name} khỏi công ty không?`)) return;
+
+    try {
+      const res = await fetch(`${API_URL}/api/boss/members/${member.user_id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_id: company.company_id,
+          requester_id: user.id,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Không thể kick tài khoản khỏi công ty');
+        return;
+      }
+
+      setMembers(prev => prev.filter(m => String(m.user_id) !== String(member.user_id)));
+      setPersonnel(prev => prev.map(p => String(p.user_id) === String(member.user_id)
+        ? { ...p, user_id: null, user_username: null, user_email: null }
+        : p
+      ));
+    } catch (err) {
+      console.error(err);
+      alert('Lỗi kết nối máy chủ');
+    }
+  };
+
   const handleAddDept = async () => {
     if (!newDeptName.trim()) return;
     try {
@@ -317,7 +348,7 @@ const EmployeeManagement = () => {
                     {m.status === 'active' ? 'Đã duyệt' : 'Chờ duyệt'}
                   </Text>
                 </View>
-                <View style={{flex: 2, flexDirection: 'row', justifyContent: 'center'}}>
+                <View style={{flex: 2, flexDirection: 'row', justifyContent: 'center', gap: 8}}>
                   {m.status === 'pending' && (
                     <TouchableOpacity style={styles.actionBtn} onPress={() => handleApprove(m.user_id)}>
                       <Text style={styles.actionText}>Duyệt</Text>
@@ -327,6 +358,11 @@ const EmployeeManagement = () => {
                     <TouchableOpacity style={[styles.actionBtn, {backgroundColor: '#eee'}]} onPress={() => handleChangeRole(m.user_id, m.role)}>
                       <Text style={[styles.actionText, {color: '#555'}]}>{m.role === 'employee' ? 'Lên quản lý' : 'Hạ xuống NV'}</Text>
                     </TouchableOpacity>
+                  )}
+                  {canManage && m.role === 'employee' && m.user_id !== user.id && (
+                    <TouchableOpacity onPress={() => handleKickMember(m)}>
+                        <Ionicons name="trash" size={18} color="#f28baf" />
+                      </TouchableOpacity>
                   )}
                 </View>
               </View>

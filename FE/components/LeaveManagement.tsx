@@ -47,6 +47,16 @@ const LeaveManagement = () => {
   const canSubmitLeave = isEmployee || isManager || isOwner;
   const canApprove = isOwner || isManager; // both can approve, but managers can't approve manager-submitted leaves
   const isAutoApprovedLeave = isOwner || leaveType === 'Nghỉ phép';
+  const getLeaveSubmissionDeadline = (leaveDate: string) => {
+    const days = Number(company.leave_request_deadline_days || 0);
+    const hours = Number(company.leave_request_deadline_hours || 0);
+    const advanceMs = ((days * 24) + hours) * 60 * 60 * 1000;
+    if (advanceMs <= 0) return null;
+
+    const leaveStart = new Date(`${leaveDate}T00:00:00`);
+    if (Number.isNaN(leaveStart.getTime())) return null;
+    return new Date(leaveStart.getTime() - advanceMs);
+  };
 
   const fetchLeaves = async () => {
     setLoading(true);
@@ -86,6 +96,11 @@ const LeaveManagement = () => {
     }
     if (leaveType === 'Nghỉ phép' && remainingLeaves <= 0) {
       alert("Bạn đã hết quỹ nghỉ phép.");
+      return;
+    }
+    const submitDeadline = getLeaveSubmissionDeadline(dateStr);
+    if (submitDeadline && new Date() > submitDeadline) {
+      alert(`Đã quá hạn gửi đơn. Đơn cho ngày ${dateStr} phải được gửi muộn nhất lúc ${submitDeadline.toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' })}.`);
       return;
     }
     setSubmitting(true);
