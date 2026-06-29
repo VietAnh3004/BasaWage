@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import Pagination from './Pagination';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
+const DEFAULT_LEAVE_TYPES = ['Nghỉ phép', 'Công tác'];
 
 const STATUS_COLOR: Record<string, string> = {
   approved: '#4caf50',
@@ -35,7 +36,7 @@ const LeaveManagement = () => {
   const [showCalendar, setShowCalendar] = useState(false);
 
   // Leave type dropdown
-  const [leaveTypes, setLeaveTypes] = useState<string[]>(['Nghỉ phép', 'Công tác']);
+  const [leaveTypes, setLeaveTypes] = useState<string[]>(DEFAULT_LEAVE_TYPES);
   const [showTypeDropdown, setShowTypeDropdown] = useState(false);
   const [showAddTypeInput, setShowAddTypeInput] = useState(false);
   const [newTypeName, setNewTypeName] = useState('');
@@ -43,8 +44,9 @@ const LeaveManagement = () => {
   const isEmployee = company.role === 'employee';
   const isManager = company.role === 'manager';
   const isOwner = company.role === 'owner';
-  const canSubmitLeave = isEmployee || isManager; // managers can also submit leave
+  const canSubmitLeave = isEmployee || isManager || isOwner;
   const canApprove = isOwner || isManager; // both can approve, but managers can't approve manager-submitted leaves
+  const isAutoApprovedLeave = isOwner || leaveType === 'Nghỉ phép';
 
   const fetchLeaves = async () => {
     setLoading(true);
@@ -65,9 +67,8 @@ const LeaveManagement = () => {
     try {
       const res = await fetch(`${API_URL}/api/leave-types?company_id=${company.company_id}`);
       const data = await res.json();
-      if (data.leaveTypes && data.leaveTypes.length > 0) {
-        setLeaveTypes(data.leaveTypes.map((t: any) => t.name));
-      }
+      const fetchedTypes = data.leaveTypes?.map((t: any) => t.name) || [];
+      setLeaveTypes(Array.from(new Set([...DEFAULT_LEAVE_TYPES, ...fetchedTypes])));
     } catch (err) {
       console.error(err);
     }
@@ -112,9 +113,11 @@ const LeaveManagement = () => {
         setReason('');
         setLeaveType('Nghỉ phép');
         fetchLeaves();
-        const msg = leaveType === 'Nghỉ phép'
+        const msg = isAutoApprovedLeave
           ? "Đã tạo đơn vắng mặt thành công!"
-          : "Đã gửi đơn, chờ Sếp tổng phê duyệt!";
+          : isManager
+            ? "Đã gửi đơn, chờ Sếp tổng phê duyệt!"
+            : "Đã gửi đơn, chờ Sếp tổng hoặc quản lý phê duyệt!";
         alert(data.mailWarning ? `${msg}\n\n${data.mailWarning}` : msg);
       }
     } catch (err) {
@@ -179,7 +182,7 @@ const LeaveManagement = () => {
 
   const totalLeaves = leaves.length;
   const pendingLeaves = leaves.filter((l: any) => l.approval_status === 'pending').length;
-  const myApprovedLeavesCount = leaves.filter((l: any) => l.approval_status === 'approved' && l.user_id === user.id).length;
+  const myApprovedLeavesCount = leaves.filter((l: any) => l.approval_status === 'approved' && l.user_id === user.id && (l.leave_type || 'Nghỉ phép') === 'Nghỉ phép').length;
   const maxLeaveDays = company.max_leave_days || 12;
   const remainingLeaves = Math.max(0, maxLeaveDays - myApprovedLeavesCount);
 
@@ -279,9 +282,9 @@ const LeaveManagement = () => {
             )}
           </View>
 
-          {leaveType !== 'Nghỉ phép' && (
+          {!isAutoApprovedLeave && (
             <Text style={{fontSize: 12, color: '#ffa500', marginBottom: 14}}>
-              ⚠ Đơn loại "{leaveType}" sẽ cần được quản lý phê duyệt trước khi có hiệu lực.
+              ⚠ Đơn loại "{leaveType}" sẽ cần được {isManager ? 'Sếp tổng' : 'Sếp tổng hoặc quản lý'} phê duyệt trước khi có hiệu lực.
             </Text>
           )}
 

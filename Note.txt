@@ -4,5 +4,5 @@ Lấy mã mời -> (done)
 Đổi màu số dễ nhìn hơn (done)
 Sếp tổng cũng xin nghỉ phép để nhân viên biết.
 them nút tùy chỉnh giờ hành chính.(done)
-Làm thông báo (qua mail).
+Làm thông báo (qua mail). (done????)
 *Xin nghỉ phải xin muộn nhất từ 9h tối hôm trước* (có thể để sếp setup)

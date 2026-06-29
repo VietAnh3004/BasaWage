@@ -845,9 +845,17 @@ const notifyManagersAboutLeave = async (leaveRequest) => {
 app.post('/api/leave', async (req, res) => {
   const { user_id, company_id, date, reason, leave_type, submitter_role } = req.body;
   const normalizedLeaveType = leave_type || 'Nghỉ phép';
-  // Auto-approve only annual leave, all others require approval.
-  const approval_status = normalizedLeaveType === 'Nghỉ phép' ? 'approved' : 'pending';
   try {
+    const member = await db.query(
+      'SELECT role FROM CompanyMembers WHERE user_id = $1 AND company_id = $2 AND status = $3',
+      [user_id, company_id, 'active']
+    );
+    if (member.rows.length === 0) {
+      return res.status(403).json({ error: 'Không có quyền tạo đơn cho công ty này' });
+    }
+    const actualSubmitterRole = member.rows[0].role;
+    const approval_status = actualSubmitterRole === 'owner' || normalizedLeaveType === 'Nghỉ phép' ? 'approved' : 'pending';
+
     if (normalizedLeaveType === 'Nghỉ phép') {
       const quota = await db.query('SELECT max_leave_days FROM Companies WHERE id = $1', [company_id]);
       const maxLeaveDays = quota.rows[0]?.max_leave_days || 12;
@@ -867,7 +875,7 @@ app.post('/api/leave', async (req, res) => {
 
     const inserted = await db.query(
       'INSERT INTO LeaveRequests (user_id, company_id, date, reason, leave_type, approval_status, submitter_role) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-      [user_id, company_id, date, reason, normalizedLeaveType, approval_status, submitter_role || 'employee']
+      [user_id, company_id, date, reason, normalizedLeaveType, approval_status, actualSubmitterRole]
     );
 
     try {
@@ -931,9 +939,18 @@ app.get('/api/leave', async (req, res) => {
 });
 
 // --- LEAVE TYPES API ---
+const ensureDefaultLeaveTypes = async (companyId) => {
+  const defaultTypes = ['Nghỉ phép', 'Công tác'];
+  await Promise.all(defaultTypes.map(name => db.query(
+    'INSERT INTO LeaveTypes (company_id, name) VALUES ($1, $2) ON CONFLICT (company_id, name) DO NOTHING',
+    [companyId, name]
+  )));
+};
+
 app.get('/api/leave-types', async (req, res) => {
   const { company_id } = req.query;
   try {
+    await ensureDefaultLeaveTypes(company_id);
     const result = await db.query('SELECT * FROM LeaveTypes WHERE company_id = $1 ORDER BY id ASC', [company_id]);
     res.json({ leaveTypes: result.rows });
   } catch (err) {
@@ -944,6 +961,7 @@ app.get('/api/leave-types', async (req, res) => {
 app.post('/api/leave-types', async (req, res) => {
   const { company_id, name } = req.body;
   try {
+    await ensureDefaultLeaveTypes(company_id);
     const result = await db.query(
       'INSERT INTO LeaveTypes (company_id, name) VALUES ($1, $2) ON CONFLICT (company_id, name) DO NOTHING RETURNING *',
       [company_id, name]
