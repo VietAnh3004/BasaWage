@@ -82,6 +82,7 @@ const SettingsView = () => {
   
   const [startTime, setStartTime] = useState(company?.work_start_time || '09:00:00');
   const [endTime, setEndTime] = useState(company?.work_end_time || '18:00:00');
+  const [flexibleMinutes, setFlexibleMinutes] = useState(company?.flexible_minutes?.toString() || '0');
   const [maxLeave, setMaxLeave] = useState(company?.max_leave_days?.toString() || '12');
   const [deadlineDays, setDeadlineDays] = useState(company?.leave_request_deadline_days?.toString() || '0');
   const [deadlineHours, setDeadlineHours] = useState(company?.leave_request_deadline_hours?.toString() || '0');
@@ -100,6 +101,7 @@ const SettingsView = () => {
           user_id: user.id,
           work_start_time: startTime,
           work_end_time: endTime,
+          flexible_minutes: parseInt(flexibleMinutes) || 0,
           max_leave_days: parseInt(maxLeave) || 12,
           leave_request_deadline_days: parseInt(deadlineDays) || 0,
           leave_request_deadline_hours: parseInt(deadlineHours) || 0
@@ -147,7 +149,6 @@ const SettingsView = () => {
             </TouchableOpacity>
             <Text style={styles.helpText}>Sau giờ này sẽ bị tính là Đi muộn</Text>
           </View>
-
           <View style={styles.formGroup}>
             <Text style={styles.label}>Giờ kết thúc (Tan làm)</Text>
             <TouchableOpacity style={styles.timeInput} onPress={() => setShowTimePicker({visible: true, field: 'end'})}>
@@ -155,6 +156,20 @@ const SettingsView = () => {
               <Text style={styles.timeText}>{endTime}</Text>
             </TouchableOpacity>
             <Text style={styles.helpText}>Trước giờ này sẽ bị tính là Về sớm</Text>
+          </View>
+        </View>
+
+        <View style={[styles.formRow, { marginTop: 18 }]}>
+          <View style={styles.formGroup}>
+            <Text style={styles.label}>Thời gian linh động (Phút)</Text>
+            <TextInput
+              style={styles.input}
+              value={flexibleMinutes}
+              onChangeText={setFlexibleMinutes}
+              keyboardType="numeric"
+              placeholder="Ví dụ: 10"
+            />
+            <Text style={styles.helpText}>Trong khoảng này sẽ ghi nhận là Linh động, chưa tính Đi muộn</Text>
           </View>
         </View>
 

@@ -18,14 +18,20 @@ type NotificationContextValue = {
   notifications: AppNotification[];
   unreadCount: number;
   readDividerIndex: number;
+  hasMore: boolean;
+  loadingMore: boolean;
   markAllAsRead: () => Promise<void>;
+  loadMoreNotifications: () => Promise<void>;
 };
 
 const NotificationContext = createContext<NotificationContextValue>({
   notifications: [],
   unreadCount: 0,
   readDividerIndex: 0,
+  hasMore: false,
+  loadingMore: false,
   markAllAsRead: async () => undefined,
+  loadMoreNotifications: async () => undefined,
 });
 
 const TYPE_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -72,6 +78,7 @@ const getNotificationDetails = (item: AppNotification) => {
       : 'Không giới hạn';
     return [
       ['Giờ hành chính', formatWorkHours(item.data)],
+      ['Thời gian linh động', Number(item.data?.flexible_minutes || 0) > 0 ? `${item.data.flexible_minutes} phút` : 'Không áp dụng'],
       ['Quỹ nghỉ phép', item.data?.max_leave_days ? `${item.data.max_leave_days} ngày/năm` : null],
       ['Hạn gửi đơn nghỉ phép', deadlineLabel],
     ].filter((detail): detail is [string, string] => Boolean(detail[1]));
@@ -99,7 +106,12 @@ export const NotificationProvider = ({ children }: { children: React.ReactNode }
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [readDividerIndex, setReadDividerIndex] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const notificationIdsRef = useRef<Set<string>>(new Set());
+  const initialLoadingRef = useRef(false);
+  const loadingMoreRef = useRef(false);
+  const markedReadLocallyRef = useRef(false);
 
   const companyId = company?.company_id;
   const streamUrl = useMemo(() => {
@@ -111,13 +123,20 @@ export const NotificationProvider = ({ children }: { children: React.ReactNode }
     setNotifications([]);
     setUnreadCount(0);
     setReadDividerIndex(0);
+    setHasMore(false);
+    setLoadingMore(false);
     notificationIdsRef.current = new Set();
+    initialLoadingRef.current = false;
+    loadingMoreRef.current = false;
+    markedReadLocallyRef.current = false;
   }, [companyId]);
 
   useEffect(() => {
     if (!token || !companyId) return;
+    if (initialLoadingRef.current) return;
 
-    fetch(`${API_URL}/api/notifications?company_id=${encodeURIComponent(companyId)}&limit=50`, {
+    initialLoadingRef.current = true;
+    fetch(`${API_URL}/api/notifications?company_id=${encodeURIComponent(companyId)}&limit=10`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(res => res.ok ? res.json() : { notifications: [] })
@@ -125,14 +144,49 @@ export const NotificationProvider = ({ children }: { children: React.ReactNode }
         const loadedNotifications = data.notifications || [];
         notificationIdsRef.current = new Set(loadedNotifications.map((item: AppNotification) => item.id));
         setNotifications(loadedNotifications);
-        setUnreadCount(data.unreadCount || 0);
-        setReadDividerIndex(data.unreadCount || 0);
+        setUnreadCount(current => markedReadLocallyRef.current ? current : (data.unreadCount || 0));
+        setReadDividerIndex(current => markedReadLocallyRef.current ? current : (data.unreadCount || 0));
+        setHasMore(Boolean(data.hasMore));
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        initialLoadingRef.current = false;
+      });
   }, [token, companyId]);
+
+  const loadMoreNotifications = async () => {
+    if (!token || !companyId || !hasMore || loadingMoreRef.current || notifications.length === 0) return;
+
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const oldestNotification = notifications[notifications.length - 1];
+      const res = await fetch(
+        `${API_URL}/api/notifications?company_id=${encodeURIComponent(companyId)}&limit=10&before_id=${encodeURIComponent(oldestNotification.id)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) return;
+
+      const data = await res.json();
+      const nextNotifications = data.notifications || [];
+      const uniqueNext = nextNotifications.filter((item: AppNotification) => {
+        if (notificationIdsRef.current.has(item.id)) return false;
+        notificationIdsRef.current.add(item.id);
+        return true;
+      });
+      setNotifications(prev => [...prev, ...uniqueNext]);
+      setHasMore(Boolean(data.hasMore));
+    } catch {
+      undefined;
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  };
 
   const markAllAsRead = async () => {
     if (!token || !companyId) return;
+    markedReadLocallyRef.current = true;
     setReadDividerIndex(current => unreadCount > 0 ? unreadCount : current);
     setUnreadCount(0);
     try {
@@ -185,7 +239,10 @@ export const NotificationProvider = ({ children }: { children: React.ReactNode }
         notifications,
         unreadCount,
         readDividerIndex,
+        hasMore,
+        loadingMore,
         markAllAsRead,
+        loadMoreNotifications,
       }}
     >
       {children}
@@ -223,7 +280,14 @@ const renderNotification = (item: AppNotification) => {
 };
 
 const NotificationCenter = () => {
-  const { notifications, readDividerIndex, markAllAsRead } = useCompanyNotifications();
+  const {
+    notifications,
+    readDividerIndex,
+    hasMore,
+    loadingMore,
+    markAllAsRead,
+    loadMoreNotifications,
+  } = useCompanyNotifications();
   const { token, company } = useAuth();
   const [customTitle, setCustomTitle] = useState('');
   const [customMessage, setCustomMessage] = useState('');
@@ -284,6 +348,11 @@ const NotificationCenter = () => {
     }
 
     const dividerIndex = Math.max(0, Math.min(readDividerIndex, notifications.length));
+    const shouldShowReadDivider = dividerIndex > 0 && dividerIndex < notifications.length;
+
+    if (!shouldShowReadDivider) {
+      return <>{notifications.map(renderNotification)}</>;
+    }
 
     return (
       <>
@@ -296,6 +365,14 @@ const NotificationCenter = () => {
         {notifications.slice(dividerIndex).map(renderNotification)}
       </>
     );
+  };
+
+  const handleNotificationScroll = ({ nativeEvent }: any) => {
+    const paddingToBottom = 80;
+    const distanceFromBottom = nativeEvent.layoutMeasurement.height + nativeEvent.contentOffset.y;
+    if (distanceFromBottom >= nativeEvent.contentSize.height - paddingToBottom) {
+      loadMoreNotifications();
+    }
   };
 
   return (
@@ -318,8 +395,22 @@ const NotificationCenter = () => {
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator
         persistentScrollbar
+        scrollEventThrottle={250}
+        onScroll={handleNotificationScroll}
       >
         {renderNotificationList()}
+        {notifications.length > 0 && (
+          <View style={styles.loadMoreState}>
+            {loadingMore ? (
+              <>
+                <ActivityIndicator size="small" color="#4a72b5" />
+                <Text style={styles.loadMoreText}>Đang tải thêm...</Text>
+              </>
+            ) : !hasMore ? (
+              <Text style={styles.loadMoreText}>Đã hiển thị hết thông báo</Text>
+            ) : null}
+          </View>
+        )}
       </ScrollView>
 
       <Modal visible={showComposer} transparent animationType="fade">
@@ -529,6 +620,19 @@ const styles = StyleSheet.create({
   readDividerText: {
     fontSize: 15,
     color: '#111827',
+    fontWeight: '600',
+  },
+  loadMoreState: {
+    minHeight: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
+  },
+  loadMoreText: {
+    fontSize: 12,
+    color: '#64748b',
     fontWeight: '600',
   },
   notificationItem: {

@@ -33,6 +33,8 @@ const StatisticsView = () => {
 
   const workStartSeconds = timeToSeconds(company.work_start_time || '09:00:00');
   const workEndSeconds = timeToSeconds(company.work_end_time || '18:00:00');
+  const flexibleMinutes = Math.max(0, Number(company.flexible_minutes || 0));
+  const flexibleEndSeconds = workStartSeconds + flexibleMinutes * 60;
 
   const fetchData = async () => {
     setLoading(true);
@@ -111,12 +113,14 @@ const StatisticsView = () => {
     }
 
     let totalLate = 0;
+    let totalFlexible = 0;
     let totalEarly = 0;
     let totalAbsent = 0;
     let totalLeave = 0;
 
     const employeeStats = filteredEmployees.map(emp => {
       let late = 0;
+      let flexible = 0;
       let early = 0;
       let absent = 0;
       let leave = 0;
@@ -131,7 +135,9 @@ const StatisticsView = () => {
         if (hasLeave) {
           leave++;
         } else if (log) {
-          if (timeToSeconds(log.firstCheckIn) > workStartSeconds) late++;
+          const firstCheckInSeconds = timeToSeconds(log.firstCheckIn);
+          if (firstCheckInSeconds > workStartSeconds && firstCheckInSeconds <= flexibleEndSeconds) flexible++;
+          if (firstCheckInSeconds > flexibleEndSeconds) late++;
           if (timeToSeconds(log.lastCheckOut) < workEndSeconds) early++;
         } else {
           // If no log and no leave, it might be an absence.
@@ -146,14 +152,15 @@ const StatisticsView = () => {
       });
 
       totalLate += late;
+      totalFlexible += flexible;
       totalEarly += early;
       totalAbsent += absent;
       totalLeave += leave;
 
-      return { ...emp, late, early, absent, leave };
+      return { ...emp, late, flexible, early, absent, leave };
     });
 
-    return { employeeStats, totalLate, totalEarly, totalAbsent, totalLeave };
+    return { employeeStats, totalLate, totalFlexible, totalEarly, totalAbsent, totalLeave };
   };
 
   const stats = getStats();
@@ -222,6 +229,10 @@ const StatisticsView = () => {
           <Text style={styles.cardTitle}>Đi muộn</Text>
           <Text style={[styles.cardValue, {color: '#dc2626'}]}>{stats.totalLate}</Text>
         </View>
+        <View style={[styles.card, { borderLeftColor: '#0f766e', borderLeftWidth: 4 }]}>
+          <Text style={styles.cardTitle}>Linh động</Text>
+          <Text style={[styles.cardValue, {color: '#0f766e'}]}>{stats.totalFlexible}</Text>
+        </View>
         <View style={[styles.card, { borderLeftColor: '#7c3aed', borderLeftWidth: 4 }]}>
           <Text style={styles.cardTitle}>Về sớm</Text>
           <Text style={[styles.cardValue, {color: '#7c3aed'}]}>{stats.totalEarly}</Text>
@@ -241,6 +252,7 @@ const StatisticsView = () => {
         <View style={styles.tableHeader}>
           <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Nhân viên</Text>
           <Text style={[styles.cell, {flex: 1, fontWeight: 'bold', textAlign: 'center'}]}>Đi muộn</Text>
+          <Text style={[styles.cell, {flex: 1, fontWeight: 'bold', textAlign: 'center'}]}>Linh động</Text>
           <Text style={[styles.cell, {flex: 1, fontWeight: 'bold', textAlign: 'center'}]}>Về sớm</Text>
           <Text style={[styles.cell, {flex: 1, fontWeight: 'bold', textAlign: 'center'}]}>Vắng</Text>
           <Text style={[styles.cell, {flex: 1, fontWeight: 'bold', textAlign: 'center'}]}>Có phép</Text>
@@ -250,6 +262,7 @@ const StatisticsView = () => {
           <View key={emp.enNo} style={styles.tableRow}>
             <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>{emp.name}</Text>
             <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.late > 0 ? '#dc2626' : '#888'}]}>{emp.late}</Text>
+            <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.flexible > 0 ? '#0f766e' : '#888'}]}>{emp.flexible}</Text>
             <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.early > 0 ? '#7c3aed' : '#888'}]}>{emp.early}</Text>
             <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.absent > 0 ? '#4a72b5' : '#888'}]}>{emp.absent}</Text>
             <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.leave > 0 ? '#4caf50' : '#888'}]}>{emp.leave}</Text>

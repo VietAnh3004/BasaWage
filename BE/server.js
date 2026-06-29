@@ -69,6 +69,7 @@ const emitCompanyEvent = async (companyId, event) => {
 const getMemberships = async (userId) => {
   const result = await db.query(`
     SELECT cm.company_id, c.name as company_name, c.join_code, c.work_start_time, c.work_end_time,
+           c.flexible_minutes,
            c.max_leave_days, c.leave_request_deadline_days, c.leave_request_deadline_hours,
            cm.role, cm.status, cm.linked_enno
     FROM CompanyMembers cm
@@ -421,7 +422,7 @@ app.get('/api/notifications/stream', async (req, res) => {
 
 app.get('/api/notifications', async (req, res) => {
   const token = getBearerToken(req);
-  const { company_id, limit = 50 } = req.query;
+  const { company_id, limit = 10, before_id } = req.query;
   if (!token || !company_id) return res.status(400).json({ error: 'Missing token or company_id' });
 
   try {
@@ -459,20 +460,28 @@ app.get('/api/notifications', async (req, res) => {
       'SELECT COUNT(*)::int AS unread_count FROM Notifications WHERE company_id = $1 AND id > $2',
       [company_id, lastReadNotificationId]
     );
-    const result = await db.query(
-      `
-        SELECT *
-        FROM Notifications
-        WHERE company_id = $1
-        ORDER BY id DESC
-        LIMIT $2
-      `,
-      [company_id, Math.min(parseInt(limit, 10) || 50, 100)]
-    );
+    const pageSize = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 50);
+    const beforeId = parseInt(before_id, 10);
+    const params = [company_id];
+    let q = `
+      SELECT *
+      FROM Notifications
+      WHERE company_id = $1
+    `;
+    if (!Number.isNaN(beforeId) && beforeId > 0) {
+      params.push(beforeId);
+      q += ` AND id < $${params.length}`;
+    }
+    params.push(pageSize + 1);
+    q += ` ORDER BY id DESC LIMIT $${params.length}`;
+
+    const result = await db.query(q, params);
+    const rows = result.rows.slice(0, pageSize);
     res.json({
-      notifications: result.rows.map(toNotificationPayload),
+      notifications: rows.map(toNotificationPayload),
       unreadCount: unread.rows[0]?.unread_count || 0,
       lastReadNotificationId,
+      hasMore: result.rows.length > pageSize,
     });
   } catch (err) {
     console.error(err);
@@ -687,10 +696,12 @@ app.put('/api/boss/settings', async (req, res) => {
     user_id,
     work_start_time,
     work_end_time,
+    flexible_minutes,
     max_leave_days,
     leave_request_deadline_days,
     leave_request_deadline_hours,
   } = req.body;
+  const flexibleMinutes = Math.max(0, parseInt(flexible_minutes, 10) || 0);
   const deadlineDays = Math.max(0, parseInt(leave_request_deadline_days, 10) || 0);
   const deadlineHours = Math.max(0, parseInt(leave_request_deadline_hours, 10) || 0);
   try {
@@ -705,12 +716,13 @@ app.put('/api/boss/settings', async (req, res) => {
         UPDATE Companies
         SET work_start_time = $1,
             work_end_time = $2,
-            max_leave_days = $3,
-            leave_request_deadline_days = $4,
-            leave_request_deadline_hours = $5
-        WHERE id = $6
+            flexible_minutes = $3,
+            max_leave_days = $4,
+            leave_request_deadline_days = $5,
+            leave_request_deadline_hours = $6
+        WHERE id = $7
       `,
-      [work_start_time, work_end_time, max_leave_days, deadlineDays, deadlineHours, company_id]
+      [work_start_time, work_end_time, flexibleMinutes, max_leave_days, deadlineDays, deadlineHours, company_id]
     );
     const state = await buildUserState(user_id);
     await emitCompanyEvent(company_id, {
@@ -722,6 +734,7 @@ app.put('/api/boss/settings', async (req, res) => {
         work_start_time,
         work_end_time,
         work_hours_label: `${String(work_start_time).slice(0, 5)} - ${String(work_end_time).slice(0, 5)}`,
+        flexible_minutes: flexibleMinutes,
         max_leave_days,
         leave_request_deadline_days: deadlineDays,
         leave_request_deadline_hours: deadlineHours,
@@ -1438,8 +1451,9 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   const client = await db.pool.connect();
   try {
     const records = parseFile(req.file.path);
-    const companySettings = await client.query('SELECT work_start_time FROM Companies WHERE id = $1', [company_id]);
+    const companySettings = await client.query('SELECT work_start_time, flexible_minutes FROM Companies WHERE id = $1', [company_id]);
     const workStartTime = companySettings.rows[0]?.work_start_time || '09:00:00';
+    const flexibleMinutes = Math.max(0, parseInt(companySettings.rows[0]?.flexible_minutes, 10) || 0);
     const grouped = {};
     const employeesMap = {};
 
@@ -1481,7 +1495,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         const parts = timeStr.split(':').map(Number);
         return (parts[0] || 0) * 3600 + (parts[1] || 0) * 60 + (parts[2] || 0);
       };
-      const isLate = parseTime(firstCheckIn) > parseTime(workStartTime);
+      const isLate = parseTime(firstCheckIn) > parseTime(workStartTime) + flexibleMinutes * 60;
 
       await client.query(`
         INSERT INTO Attendance (enNo, company_id, date, firstCheckIn, lastCheckOut, isLate)

@@ -6,3 +6,10 @@ Sếp tổng cũng xin nghỉ phép để nhân viên biết.
 them nút tùy chỉnh giờ hành chính.(done)
 Làm thông báo (qua mail). (done????)
 *Xin nghỉ phải xin muộn nhất từ 9h tối hôm trước* (có thể để sếp setup)
+---------------------------
+THêm thời gian du di
+tài khoản cấp sẵn, không tự tạo
+CHi tiết quỹ nghỉ phép
+Công ty chủ động đặt rule nghỉ phép, các loại... (Chính sách nghỉ phép)
+Thông báo viết tay gửi mail cho toàn bộ nhân viên
+Xin đi muộn về sớm????

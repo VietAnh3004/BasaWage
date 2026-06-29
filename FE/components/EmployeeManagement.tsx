@@ -268,6 +268,12 @@ const EmployeeManagement = () => {
         <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Trạng thái</Text>
         <Text style={[styles.cell, {flex: 1, textAlign: 'center', fontWeight: 'bold'}]}>Hành động</Text>
       </View>
+      {canManage && (
+        <TouchableOpacity style={styles.addBtnRow} onPress={() => { setPersonnelForm({id: null, name: '', department_id: null}); setShowPersonnelModal(true); }}>
+          <Ionicons name="add-circle" size={20} color="#4a72b5" />
+          <Text style={{color: '#4a72b5', fontWeight: 'bold', marginLeft: 5}}>Thêm nhân sự mới</Text>
+        </TouchableOpacity>
+      )}
       {(() => {
         const filtered = personnel.filter(p => !searchQuery || p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.department_name?.toLowerCase().includes(searchQuery.toLowerCase()));
         const paginated = filtered.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
@@ -311,12 +317,6 @@ const EmployeeManagement = () => {
           </>
         );
       })()}
-      {canManage && (
-        <TouchableOpacity style={styles.addBtnRow} onPress={() => { setPersonnelForm({id: null, name: '', department_id: null}); setShowPersonnelModal(true); }}>
-          <Ionicons name="add-circle" size={20} color="#4a72b5" />
-          <Text style={{color: '#4a72b5', fontWeight: 'bold', marginLeft: 5}}>Thêm nhân sự mới</Text>
-        </TouchableOpacity>
-      )}
     </View>
   );
 

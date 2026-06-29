@@ -32,6 +32,8 @@ const CalendarView = () => {
 
   const workStartSeconds = timeToSeconds(company.work_start_time || '09:00:00');
   const workEndSeconds = timeToSeconds(company.work_end_time || '18:00:00');
+  const flexibleMinutes = Math.max(0, Number(company.flexible_minutes || 0));
+  const flexibleEndSeconds = workStartSeconds + flexibleMinutes * 60;
   const workTimeLabel = `${formatWorkTime(company.work_start_time || '09:00:00')} - ${formatWorkTime(company.work_end_time || '18:00:00')}`;
 
   const fetchData = async () => {
@@ -122,7 +124,7 @@ const CalendarView = () => {
   const getLateEmployees = (dateStr: string, isWeekend: boolean) => {
     if (isWeekend) return [];
     return attendance
-      .filter(a => a.date === dateStr && timeToSeconds(a.firstCheckIn) > workStartSeconds && (!selectedEmployee || a.enNo === selectedEmployee) && isEmployeeInDept(a.enNo))
+      .filter(a => a.date === dateStr && timeToSeconds(a.firstCheckIn) > flexibleEndSeconds && (!selectedEmployee || a.enNo === selectedEmployee) && isEmployeeInDept(a.enNo))
       .map(a => employees.find(e => e.enNo === a.enNo))
       .filter(Boolean);
   };
@@ -274,13 +276,17 @@ const CalendarView = () => {
     const absentEmps = getAbsentEmployees(selectedDate, isWeekend);
     const leaveEmps = getOnLeaveEmployees(selectedDate, isWeekend);
     
-    const timelineLogs = attendance.filter(a => 
-      !isWeekend &&
-      a.date === selectedDate && 
-      (timeToSeconds(a.firstCheckIn) > workStartSeconds || timeToSeconds(a.lastCheckOut) < workEndSeconds) &&
-      (!selectedEmployee || a.enNo === selectedEmployee) &&
-      isEmployeeInDept(a.enNo)
-    );
+    const timelineLogs = attendance.filter(a => {
+      const checkInSeconds = timeToSeconds(a.firstCheckIn);
+      const checkOutSeconds = timeToSeconds(a.lastCheckOut);
+      const isActuallyLate = checkInSeconds > flexibleEndSeconds;
+      const isEarly = checkOutSeconds < workEndSeconds;
+      return !isWeekend &&
+        a.date === selectedDate &&
+        (isActuallyLate || isEarly) &&
+        (!selectedEmployee || a.enNo === selectedEmployee) &&
+        isEmployeeInDept(a.enNo);
+    });
     const timelineEmps = timelineLogs.map(a => {
       const emp = employees.find(e => e.enNo === a.enNo);
       return { ...emp, firstCheckIn: a.firstCheckIn, lastCheckOut: a.lastCheckOut };
@@ -353,10 +359,12 @@ const CalendarView = () => {
            <ScrollView style={{marginTop: 10}}>
              {timelineEmps.length === 0 ? <Text style={{color: '#888', marginTop: 10, fontStyle: 'italic'}}>Không có người đi muộn / về sớm.</Text> : null}
              {timelineEmps.map((emp, idx) => {
-                const startSecs = Math.max(timeToSeconds(emp.firstCheckIn) - startOfDaySecs, 0);
-                const endSecs = Math.min(timeToSeconds(emp.lastCheckOut) - startOfDaySecs, totalDaySecs);
-                const leftPercent = Math.max((startSecs / totalDaySecs) * 100, 0);
-                let widthPercent = ((endSecs - startSecs) / totalDaySecs) * 100;
+                 const checkInSeconds = timeToSeconds(emp.firstCheckIn);
+                 const checkOutSeconds = timeToSeconds(emp.lastCheckOut);
+                 const timelineStartSecs = Math.max(Math.min(checkInSeconds, checkOutSeconds) - startOfDaySecs, 0);
+                 const timelineEndSecs = Math.min(Math.max(checkInSeconds, checkOutSeconds) - startOfDaySecs, totalDaySecs);
+                 const leftPercent = Math.max((timelineStartSecs / totalDaySecs) * 100, 0);
+                 let widthPercent = ((timelineEndSecs - timelineStartSecs) / totalDaySecs) * 100;
                 
                 if (widthPercent < 1) widthPercent = 1; 
 
@@ -398,25 +406,10 @@ const CalendarView = () => {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
-      <View style={styles.topActionsContainer}>
-        {!isEmployee && (
-          <TouchableOpacity style={styles.uploadBtn} onPress={handleUpload} disabled={loading}>
-            {loading ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <>
-                <Ionicons name="cloud-upload-outline" size={18} color="#fff" style={{ marginRight: 8 }} />
-                <Text style={styles.uploadBtnText}>Upload File (.txt)</Text>
-              </>
-            )}
-          </TouchableOpacity>
-        )}
-      </View>
-
       {!isEmployee && (
-        <View style={{ marginBottom: 20, zIndex: 9999, flexDirection: 'row', gap: 15 }}>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontWeight: 'bold', marginBottom: 10 }}>Lọc theo bộ phận:</Text>
+        <View style={styles.attendanceControlsRow}>
+          <View style={styles.filterControl}>
+            <Text style={styles.filterLabel}>Lọc theo bộ phận:</Text>
             <SearchableDropdown
               data={departments}
               value={selectedDepartment}
@@ -429,12 +422,12 @@ const CalendarView = () => {
               keyExtractor={(item) => item.id}
               labelExtractor={(item) => item.name}
               showClear={true}
-              style={{ width: '100%', maxWidth: 300 }}
+              style={styles.filterDropdown}
             />
           </View>
 
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontWeight: 'bold', marginBottom: 10 }}>Lọc theo nhân viên:</Text>
+          <View style={styles.filterControl}>
+            <Text style={styles.filterLabel}>Lọc theo nhân viên:</Text>
             <SearchableDropdown
               data={employees.filter(e => isEmployeeInDept(e.enNo))}
               value={selectedEmployee}
@@ -444,8 +437,21 @@ const CalendarView = () => {
               keyExtractor={(item) => item.enNo}
               labelExtractor={(item) => item.name}
               showClear={true}
-              style={{ width: '100%', maxWidth: 300 }}
+              style={styles.filterDropdown}
             />
+          </View>
+
+          <View style={styles.uploadControl}>
+            <TouchableOpacity style={[styles.uploadBtn, loading && styles.uploadBtnDisabled]} onPress={handleUpload} disabled={loading}>
+              {loading ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="cloud-upload-outline" size={18} color="#fff" style={{ marginRight: 8 }} />
+                  <Text style={styles.uploadBtnText}>Upload File (.txt)</Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
         </View>
       )}
@@ -482,11 +488,31 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  topActionsContainer: {
+  attendanceControlsRow: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    alignItems: 'center',
+    alignItems: 'flex-end',
+    flexWrap: 'wrap',
+    gap: 14,
     marginBottom: 20,
+    zIndex: 9999,
+  },
+  filterControl: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 240,
+    minWidth: 220,
+    maxWidth: 320,
+  },
+  filterDropdown: {
+    width: '100%',
+  },
+  filterLabel: {
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  uploadControl: {
+    flexGrow: 0,
+    flexShrink: 0,
   },
   modeSelectorContainer: {
     flexDirection: 'row',
@@ -510,10 +536,16 @@ const styles = StyleSheet.create({
   uploadBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#4a72b5',
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderRadius: 8,
+    minWidth: 178,
+    minHeight: 42,
+  },
+  uploadBtnDisabled: {
+    opacity: 0.75,
   },
   uploadBtnText: {
     color: '#fff',

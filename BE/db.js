@@ -60,6 +60,7 @@ const initDb = async () => {
         join_code TEXT UNIQUE NOT NULL,
         work_start_time TEXT DEFAULT '09:00:00',
         work_end_time TEXT DEFAULT '18:00:00',
+        flexible_minutes INTEGER DEFAULT 0,
         max_leave_days INTEGER DEFAULT 12,
         leave_request_deadline_days INTEGER DEFAULT 0,
         leave_request_deadline_hours INTEGER DEFAULT 0
@@ -190,6 +191,7 @@ const initDb = async () => {
       await pool.query(`ALTER TABLE Users ADD COLUMN IF NOT EXISTS email_verification_expires TIMESTAMP`);
       await pool.query(`ALTER TABLE Companies ADD COLUMN IF NOT EXISTS work_start_time TEXT DEFAULT '09:00:00'`);
       await pool.query(`ALTER TABLE Companies ADD COLUMN IF NOT EXISTS work_end_time TEXT DEFAULT '18:00:00'`);
+      await pool.query(`ALTER TABLE Companies ADD COLUMN IF NOT EXISTS flexible_minutes INTEGER DEFAULT 0`);
       await pool.query(`ALTER TABLE Companies ADD COLUMN IF NOT EXISTS max_leave_days INTEGER DEFAULT 12`);
       await pool.query(`ALTER TABLE Companies ADD COLUMN IF NOT EXISTS leave_request_deadline_days INTEGER DEFAULT 0`);
       await pool.query(`ALTER TABLE Companies ADD COLUMN IF NOT EXISTS leave_request_deadline_hours INTEGER DEFAULT 0`);
