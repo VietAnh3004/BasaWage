@@ -1,11 +1,11 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation, useNavigationState } from '@react-navigation/native';
 import { useCompanyNotifications } from './NotificationCenter';
 
-const Sidebar = () => {
+const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => {
   const { user, company, logout } = useAuth();
   const { unreadCount, markAllAsRead } = useCompanyNotifications();
   const navigation = useNavigation<any>();
@@ -34,18 +34,22 @@ const Sidebar = () => {
     <View style={styles.sidebar}>
       <TouchableOpacity 
         style={styles.logoContainer}
-        onPress={() => navigation.navigate('Dashboard', { screen: 'Statistics' })}
+        onPress={() => {
+          navigation.navigate('Dashboard', { screen: 'Statistics' });
+          if (onNavigate) onNavigate();
+        }}
       >
         <Image source={require('../assets/logo.png')} style={{width: 40, height: 40, resizeMode: 'contain'}} />
         <Text style={styles.logoName}>basawage</Text>
       </TouchableOpacity>
 
-      <View style={styles.menuContainer}>
+      <ScrollView style={styles.menuContainer} showsVerticalScrollIndicator={false}>
         <TouchableOpacity
           style={[styles.notificationItem, activeTab === 'notifications' && styles.notificationItemActive]}
           onPress={() => {
             markAllAsRead();
             navigation.navigate('Dashboard', { screen: 'Notifications' });
+            if (onNavigate) onNavigate();
           }}
         >
           <View style={styles.notificationIconBox}>
@@ -68,7 +72,10 @@ const Sidebar = () => {
 
         <TouchableOpacity 
           style={[styles.menuItem, activeTab === 'calendar' && styles.menuItemActive]}
-          onPress={() => navigation.navigate('Dashboard', { screen: 'Calendar' })}
+          onPress={() => {
+            navigation.navigate('Dashboard', { screen: 'Calendar' });
+            if (onNavigate) onNavigate();
+          }}
         >
           <Ionicons name="time-outline" size={18} color={activeTab === 'calendar' ? "#fff" : "#888"} />
           <Text style={[styles.menuItemText, activeTab === 'calendar' && styles.menuItemTextActive]}>Chấm công</Text>
@@ -76,7 +83,10 @@ const Sidebar = () => {
 
         <TouchableOpacity 
           style={[styles.menuItem, activeTab === 'attendancerequests' && styles.menuItemActive]}
-          onPress={() => navigation.navigate('Dashboard', { screen: 'AttendanceRequests' })}
+          onPress={() => {
+            navigation.navigate('Dashboard', { screen: 'AttendanceRequests' });
+            if (onNavigate) onNavigate();
+          }}
         >
           <Ionicons name="reader-outline" size={18} color={activeTab === 'attendancerequests' ? "#fff" : "#888"} />
           <Text style={[styles.menuItemText, activeTab === 'attendancerequests' && styles.menuItemTextActive]}>Phiếu chấm công</Text>
@@ -85,7 +95,10 @@ const Sidebar = () => {
         {(company.role === 'owner' || company.role === 'manager') && (
           <TouchableOpacity 
             style={[styles.menuItem, activeTab === 'employees' && styles.menuItemActive]}
-            onPress={() => navigation.navigate('Dashboard', { screen: 'Employees' })}
+            onPress={() => {
+              navigation.navigate('Dashboard', { screen: 'Employees' });
+              if (onNavigate) onNavigate();
+            }}
           >
             <Ionicons name="people-outline" size={18} color={activeTab === 'employees' ? "#fff" : "#888"} />
             <Text style={[styles.menuItemText, activeTab === 'employees' && styles.menuItemTextActive]}>Nhân viên</Text>
@@ -94,7 +107,10 @@ const Sidebar = () => {
 
         <TouchableOpacity 
           style={[styles.menuItem, activeTab === 'leave' && styles.menuItemActive]}
-          onPress={() => navigation.navigate('Dashboard', { screen: 'Leave' })}
+          onPress={() => {
+            navigation.navigate('Dashboard', { screen: 'Leave' });
+            if (onNavigate) onNavigate();
+          }}
         >
           <Ionicons name="calendar-outline" size={18} color={activeTab === 'leave' ? "#fff" : "#888"} />
           <Text style={[styles.menuItemText, activeTab === 'leave' && styles.menuItemTextActive]}>Nghỉ phép</Text>
@@ -102,7 +118,10 @@ const Sidebar = () => {
 
         <TouchableOpacity 
           style={[styles.menuItem, activeTab === 'statistics' && styles.menuItemActive]}
-          onPress={() => navigation.navigate('Dashboard', { screen: 'Statistics' })}
+          onPress={() => {
+            navigation.navigate('Dashboard', { screen: 'Statistics' });
+            if (onNavigate) onNavigate();
+          }}
         >
           <Ionicons name="bar-chart-outline" size={18} color={activeTab === 'statistics' ? "#fff" : "#888"} />
           <Text style={[styles.menuItemText, activeTab === 'statistics' && styles.menuItemTextActive]}>Thống kê</Text>
@@ -111,7 +130,10 @@ const Sidebar = () => {
         {company.role === 'owner' && (
           <TouchableOpacity 
             style={[styles.menuItem, activeTab === 'settings' && styles.menuItemActive]}
-            onPress={() => navigation.navigate('Dashboard', { screen: 'Settings' })}
+            onPress={() => {
+              navigation.navigate('Dashboard', { screen: 'Settings' });
+              if (onNavigate) onNavigate();
+            }}
           >
             <Ionicons name="settings-outline" size={18} color={activeTab === 'settings' ? "#fff" : "#888"} />
             <Text style={[styles.menuItemText, activeTab === 'settings' && styles.menuItemTextActive]}>Cài đặt công ty</Text>
@@ -119,12 +141,15 @@ const Sidebar = () => {
         )}
         <TouchableOpacity
           style={[styles.menuItem, activeTab === 'profilesettings' && styles.menuItemActive]}
-          onPress={() => navigation.navigate('Dashboard', { screen: 'ProfileSettings' })}
+          onPress={() => {
+            navigation.navigate('Dashboard', { screen: 'ProfileSettings' });
+            if (onNavigate) onNavigate();
+          }}
         >
           <Ionicons name="person-circle-outline" size={18} color={activeTab === 'profilesettings' ? "#fff" : "#888"} />
           <Text style={[styles.menuItemText, activeTab === 'profilesettings' && styles.menuItemTextActive]}>Thông tin cá nhân</Text>
         </TouchableOpacity>
-      </View>
+      </ScrollView>
 
       <View style={styles.footer}>
         <View style={styles.userContainer}>
@@ -149,6 +174,7 @@ const Sidebar = () => {
 const styles = StyleSheet.create({
   sidebar: {
     width: 250,
+    height: '100%',
     backgroundColor: '#fff',
     borderRightWidth: 1,
     borderRightColor: '#eee',

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Modal, TextInput } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Modal, TextInput, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Calendar } from 'react-native-calendars';
 import { useAuth } from '../context/AuthContext';
@@ -7,6 +7,8 @@ import SearchableDropdown from './SearchableDropdown';
 
 const AttendanceRequestsView = () => {
   const { user, company } = useAuth();
+  const { width } = useWindowDimensions();
+  const isMobile = width < 768;
   const [attendanceRequests, setAttendanceRequests] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [showRequestModal, setShowRequestModal] = useState(false);
@@ -216,11 +218,13 @@ const AttendanceRequestsView = () => {
         ) : attendanceRequests.length === 0 ? (
           <Text style={styles.emptyText}>Chưa có phiếu chấm công nào.</Text>
         ) : (
-          <View style={styles.table}>
-            <View style={styles.tableHeader}>
+          <ScrollView horizontal={isMobile} showsHorizontalScrollIndicator={false}>
+            <View style={[styles.table, isMobile && { width: 850 }]}>
+              <View style={styles.tableHeader}>
               <Text style={[styles.cell, {flex: 1.5, fontWeight: 'bold'}]}>Người gửi</Text>
               <Text style={[styles.cell, {flex: 1.2, fontWeight: 'bold'}]}>Ngày</Text>
               <Text style={[styles.cell, {flex: 0.8, fontWeight: 'bold'}]}>Giờ</Text>
+              <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Lý do</Text>
               <Text style={[styles.cell, {flex: 1, fontWeight: 'bold'}]}>Trạng thái</Text>
               {!isEmployee && <Text style={[styles.cell, {flex: 1.2, textAlign: 'center', fontWeight: 'bold'}]}>Thao tác</Text>}
             </View>
@@ -229,6 +233,7 @@ const AttendanceRequestsView = () => {
                 <Text style={[styles.cell, {flex: 1.5}]}>{req.username || req.machine_name || req.enno}</Text>
                 <Text style={[styles.cell, {flex: 1.2}]}>{req.date}</Text>
                 <Text style={[styles.cell, {flex: 0.8}]}>{String(req.time || '').slice(0, 5)}</Text>
+                <Text style={[styles.cell, {flex: 2}]}>{req.reason || '-'}</Text>
                 <Text style={[styles.cell, {flex: 1, color: statusColor[req.approval_status] || '#444', fontWeight: 'bold'}]}>
                   {statusLabel[req.approval_status] || req.approval_status}
                 </Text>
@@ -256,6 +261,7 @@ const AttendanceRequestsView = () => {
               </View>
             ))}
           </View>
+          </ScrollView>
         )}
       </View>
 

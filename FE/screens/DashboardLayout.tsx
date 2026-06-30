@@ -1,6 +1,7 @@
-import React from 'react';
-import { View, StyleSheet, SafeAreaView, ScrollView, Text, TouchableOpacity } from 'react-native';
+import React, { useState } from 'react';
+import { View, StyleSheet, SafeAreaView, ScrollView, Text, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { Ionicons } from '@expo/vector-icons';
 import Sidebar from '../components/Sidebar';
 import CalendarView from '../components/CalendarView';
 import AttendanceRequestsView from '../components/AttendanceRequestsView';
@@ -16,6 +17,9 @@ const Stack = createNativeStackNavigator();
 
 const DashboardLayout = () => {
   const { user, company, logout } = useAuth();
+  const { width } = useWindowDimensions();
+  const isMobile = width < 768;
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   if (company.status === 'pending') {
     return (
@@ -37,8 +41,30 @@ const DashboardLayout = () => {
     <NotificationProvider>
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.container}>
-          <Sidebar />
+          {(!isMobile || isSidebarOpen) && (
+            <>
+              {isMobile && (
+                <TouchableOpacity 
+                  style={styles.backdrop} 
+                  activeOpacity={1} 
+                  onPress={() => setIsSidebarOpen(false)} 
+                />
+              )}
+              <View style={[isMobile ? styles.sidebarMobile : { height: '100%' }]}>
+                <Sidebar onNavigate={() => isMobile && setIsSidebarOpen(false)} />
+              </View>
+            </>
+          )}
           <View style={styles.mainContent}>
+            {isMobile && (
+              <View style={styles.mobileHeader}>
+                <TouchableOpacity onPress={() => setIsSidebarOpen(true)} style={styles.menuIcon}>
+                  <Ionicons name="menu" size={28} color="#333" />
+                </TouchableOpacity>
+                <Text style={styles.mobileHeaderTitle}>{company.company_name}</Text>
+                <View style={{width: 28}} /> {/* placeholder to center title */}
+              </View>
+            )}
             <ScrollView contentContainerStyle={styles.scrollContent}>
               <Stack.Navigator
                 id="DashboardStack"
@@ -79,6 +105,46 @@ const styles = StyleSheet.create({
     padding: 20,
     flexGrow: 1,
     backgroundColor: '#fff',
+  },
+  sidebarMobile: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    zIndex: 1000,
+    backgroundColor: '#fff',
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    shadowOffset: { width: 5, height: 0 },
+  },
+  backdrop: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    zIndex: 999,
+  },
+  mobileHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  menuIcon: {
+    padding: 4,
+  },
+  mobileHeaderTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
   }
 });
 

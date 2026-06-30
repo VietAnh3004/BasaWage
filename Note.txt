@@ -20,3 +20,5 @@ import thông tin NV qua exel
 Thêm hiện công cho cá nhân và cả tổng cho sếp (done)
 Link xác thực là link FE (done)
 Trang thống kê cho nhân viên (done)
+----------------
+Tính nghỉ theo ngày vào.

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import SearchableDropdown from './SearchableDropdown';
@@ -22,7 +22,10 @@ const StatisticsView = () => {
 
   const [currentDate, setCurrentDate] = useState(new Date());
   
-  const ITEMS_PER_PAGE = 12;
+  const { width } = useWindowDimensions();
+  const isMobile = width < 768;
+
+  const ITEMS_PER_PAGE = 20;
   const [currentPage, setCurrentPage] = useState(1);
 
   const isEmployee = company.role === 'employee';
@@ -206,8 +209,8 @@ const StatisticsView = () => {
 
       {/* Filters */}
       {!isEmployee && (
-        <View style={{ marginBottom: 20, zIndex: 9999, flexDirection: 'row', gap: 15 }}>
-          <View style={{ flex: 1 }}>
+        <View style={{ marginBottom: 20, zIndex: 9999, flexDirection: isMobile ? 'column' : 'row', gap: 15 }}>
+          <View style={{ flex: 1, zIndex: 2 }}>
             <Text style={{ fontWeight: 'bold', marginBottom: 10 }}>Lọc theo bộ phận:</Text>
             <SearchableDropdown
               data={departments}
@@ -225,7 +228,7 @@ const StatisticsView = () => {
             />
           </View>
 
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, zIndex: 1 }}>
             <Text style={{ fontWeight: 'bold', marginBottom: 10 }}>Lọc theo nhân viên:</Text>
             <SearchableDropdown
               data={employees.filter(e => isEmployeeInDept(e.enNo))}
@@ -274,8 +277,9 @@ const StatisticsView = () => {
 
       {/* Detailed Table */}
       {!isEmployee && (
-        <View style={styles.table}>
-          <View style={styles.tableHeader}>
+        <ScrollView horizontal={isMobile} showsHorizontalScrollIndicator={false} style={{ zIndex: 1, marginBottom: 20 }}>
+          <View style={[styles.table, isMobile && { width: 800 }]}>
+            <View style={styles.tableHeader}>
             <Text style={[styles.cell, {flex: 1.5, fontWeight: 'bold'}]}>Nhân viên</Text>
             <Text style={[styles.cell, {flex: 1.5, fontWeight: 'bold'}]}>Bộ phận</Text>
             <Text style={[styles.cell, {flex: 0.8, fontWeight: 'bold', textAlign: 'center'}]}>Công</Text>
@@ -308,7 +312,8 @@ const StatisticsView = () => {
             totalPages={Math.ceil(stats.employeeStats.length / ITEMS_PER_PAGE)} 
             onPageChange={setCurrentPage} 
           />
-        </View>
+          </View>
+        </ScrollView>
       )}
     </ScrollView>
   );
@@ -344,12 +349,14 @@ const styles = StyleSheet.create({
   },
   cardsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 15,
     marginBottom: 30,
     zIndex: 1,
   },
   card: {
     flex: 1,
+    minWidth: 100,
     backgroundColor: '#fff',
     padding: 20,
     borderRadius: 8,

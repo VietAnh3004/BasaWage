@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { useAuth } from '../context/AuthContext';
@@ -121,6 +121,9 @@ const CalendarView = () => {
     return p && p.department_id === selectedDepartment;
   };
 
+  const { width } = useWindowDimensions();
+  const isMobile = width < 768;
+
   const getLateEmployees = (dateStr: string, isWeekend: boolean) => {
     if (isWeekend) return [];
     return attendance
@@ -219,14 +222,16 @@ const CalendarView = () => {
 
   const renderMonthView = () => (
     <View style={styles.calendarCard}>
-      <View style={styles.monthHeader}>
-        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
-          <View key={day} style={styles.monthDayName}>
-            <Text style={styles.dayName}>{day}</Text>
+      <ScrollView horizontal={isMobile} showsHorizontalScrollIndicator={false}>
+        <View style={[isMobile && { minWidth: '100%' }]}>
+          <View style={styles.monthHeader}>
+            {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
+              <View key={day} style={styles.monthDayName}>
+                <Text style={styles.dayName}>{day}</Text>
+              </View>
+            ))}
           </View>
-        ))}
-      </View>
-      <View style={styles.monthGrid}>
+          <View style={styles.monthGrid}>
         {monthCells.map((cell, index) => {
           let lateCount = 0;
           let absentCount = 0;
@@ -248,7 +253,7 @@ const CalendarView = () => {
           return (
             <TouchableOpacity 
               key={index} 
-              style={[styles.monthCell, !cell.isCurrentMonth && {backgroundColor: '#f9f9f9'}]}
+              style={[styles.monthCell, isMobile && { padding: 4, height: 110 }, !cell.isCurrentMonth && {backgroundColor: '#f9f9f9'}]}
               onPress={() => {
                 if (cell.isCurrentMonth) {
                   setSelectedDate(cell.fullDate);
@@ -257,23 +262,25 @@ const CalendarView = () => {
               }}
               disabled={!cell.isCurrentMonth}
             >
-              <Text style={[styles.monthDayText, !cell.isCurrentMonth && styles.monthDayTextDisabled]}>
+              <Text style={[styles.monthDayText, isMobile && {fontSize: 12, marginBottom: 2}, !cell.isCurrentMonth && styles.monthDayTextDisabled]}>
                 {cell.day}
               </Text>
               
               {cell.isCurrentMonth && (
                 <View style={styles.eventTextContainer}>
-                  {checkedInCount > 0 && <Text style={{color: '#0f766e', fontSize: 12, fontWeight: 'bold'}}>{checkedInCount} đã chấm công</Text>}
-                  {lateCount > 0 && <Text style={{color: '#dc2626', fontSize: 12, fontWeight: 'bold'}}>{lateCount} muộn</Text>}
-                  {earlyCount > 0 && <Text style={{color: '#7c3aed', fontSize: 12, fontWeight: 'bold'}}>{earlyCount} về sớm</Text>}
-                  {absentCount > 0 && <Text style={{color: '#4a72b5', fontSize: 12, fontWeight: 'bold'}}>{absentCount} vắng mặt</Text>}
-                  {leaveCount > 0 && <Text style={{color: '#4caf50', fontSize: 12, fontWeight: 'bold'}}>{leaveCount} có phép</Text>}
+                  {checkedInCount > 0 && <Text style={{color: '#0f766e', fontSize: isMobile ? 10 : 12, fontWeight: 'bold', lineHeight: isMobile ? 12 : 16}}>{checkedInCount} {isMobile ? 'công' : 'đã chấm công'}</Text>}
+                  {lateCount > 0 && <Text style={{color: '#dc2626', fontSize: isMobile ? 10 : 12, fontWeight: 'bold', lineHeight: isMobile ? 12 : 16}}>{lateCount} muộn</Text>}
+                  {earlyCount > 0 && <Text style={{color: '#7c3aed', fontSize: isMobile ? 10 : 12, fontWeight: 'bold', lineHeight: isMobile ? 12 : 16}}>{earlyCount} về sớm</Text>}
+                  {absentCount > 0 && <Text style={{color: '#4a72b5', fontSize: isMobile ? 10 : 12, fontWeight: 'bold', lineHeight: isMobile ? 12 : 16}}>{absentCount} vắng</Text>}
+                  {leaveCount > 0 && <Text style={{color: '#4caf50', fontSize: isMobile ? 10 : 12, fontWeight: 'bold', lineHeight: isMobile ? 12 : 16}}>{leaveCount} phép</Text>}
                 </View>
               )}
             </TouchableOpacity>
           );
         })}
-      </View>
+          </View>
+        </View>
+      </ScrollView>
     </View>
   );
 
@@ -312,8 +319,8 @@ const CalendarView = () => {
            <Text style={{fontSize: 18, fontWeight: 'bold'}}>Chi tiết ngày {selectedDate}</Text>
         </View>
 
-        <View style={{padding: 15, borderBottomWidth: 1, borderBottomColor: '#eee', flexDirection: 'row'}}>
-           <View style={{flex: 1}}>
+        <View style={{padding: 15, borderBottomWidth: 1, borderBottomColor: '#eee', flexDirection: isMobile ? 'column' : 'row'}}>
+           <View style={{flex: isMobile ? undefined : 1, marginBottom: isMobile ? 20 : 0}}>
              <Text style={{fontWeight: 'bold', marginBottom: 10, fontSize: 14}}>Vắng mặt (không phép):</Text>
              <View style={{flexDirection: 'row', flexWrap: 'wrap'}}>
                {absentEmps.length === 0 ? <Text style={{color: '#888', fontStyle: 'italic'}}>Không có ai</Text> : null}
@@ -325,7 +332,7 @@ const CalendarView = () => {
              </View>
            </View>
            
-           <View style={{flex: 1}}>
+           <View style={{flex: isMobile ? undefined : 1}}>
              <Text style={{fontWeight: 'bold', marginBottom: 10, fontSize: 14}}>Nghỉ có phép:</Text>
              <View style={{flexDirection: 'row', flexWrap: 'wrap'}}>
                {leaveEmps.length === 0 ? <Text style={{color: '#888', fontStyle: 'italic'}}>Không có ai</Text> : null}
@@ -341,70 +348,74 @@ const CalendarView = () => {
         <View style={{padding: 15, flex: 1}}>
            <Text style={{fontWeight: 'bold', marginBottom: 15, fontSize: 14}}>Lịch sử hoạt động (người đi muộn / về sớm):</Text>
            
-           <View style={{flexDirection: 'row'}}>
-             <View style={{width: 120}}>{/* Name Column Header */}</View>
-             <View style={{flex: 1, position: 'relative', height: 20}}>
-               {[8, 10, 12, 14, 16, 18, 20].map(h => {
-                 const percent = ((h - 8) / 13) * 100;
-                 return (
-                   <Text key={h} style={{
-                     position: 'absolute',
-                     left: `${percent}%`,
-                     transform: [{ translateX: '-50%' }],
-                     fontSize: 10, 
-                     color: '#888',
-                     textAlign: 'center',
-                     width: 40
-                   }}>
-                     {h}:00
-                   </Text>
-                 );
-               })}
-             </View>
-           </View>
-           
-           <ScrollView style={{marginTop: 10}}>
-             {timelineEmps.length === 0 ? <Text style={{color: '#888', marginTop: 10, fontStyle: 'italic'}}>Không có người đi muộn / về sớm.</Text> : null}
-             {timelineEmps.map((emp, idx) => {
-                 const checkInSeconds = timeToSeconds(emp.firstCheckIn);
-                 const checkOutSeconds = timeToSeconds(emp.lastCheckOut);
-                 const timelineStartSecs = Math.max(Math.min(checkInSeconds, checkOutSeconds) - startOfDaySecs, 0);
-                 const timelineEndSecs = Math.min(Math.max(checkInSeconds, checkOutSeconds) - startOfDaySecs, totalDaySecs);
-                 const leftPercent = Math.max((timelineStartSecs / totalDaySecs) * 100, 0);
-                 let widthPercent = ((timelineEndSecs - timelineStartSecs) / totalDaySecs) * 100;
-                
-                if (widthPercent < 1) widthPercent = 1; 
-
-                return (
-                  <View key={idx} style={{flexDirection: 'row', alignItems: 'center', marginVertical: 12}}>
-                    <Text style={{width: 120, fontSize: 13, fontWeight: '500'}} numberOfLines={1}>{emp.name}</Text>
-                    <View style={{flex: 1, height: 24, backgroundColor: '#f0f0f0', borderRadius: 12, position: 'relative', overflow: 'hidden'}}>
-                       <View style={{
+           <ScrollView horizontal={isMobile} showsHorizontalScrollIndicator={false} style={{flex: 1}}>
+             <View style={[isMobile && { minWidth: 600, paddingRight: 15 }]}>
+               <View style={{flexDirection: 'row'}}>
+                 <View style={{width: 120}}>{/* Name Column Header */}</View>
+                 <View style={{flex: 1, position: 'relative', height: 20}}>
+                   {[8, 10, 12, 14, 16, 18, 20].map(h => {
+                     const percent = ((h - 8) / 13) * 100;
+                     return (
+                       <Text key={h} style={{
                          position: 'absolute',
-                         left: `${leftPercent}%`,
-                         width: `${widthPercent}%`,
-                         height: '100%',
-                         backgroundColor: emp.color,
-                         borderRadius: 12
-                       }} />
-                       <Text style={{
-                          position: 'absolute',
-                          left: `${leftPercent}%`,
-                          paddingLeft: 8,
-                          fontSize: 10,
-                          color: '#fff',
-                          fontWeight: 'bold',
-                          lineHeight: 24,
-                          textShadowColor: 'rgba(0,0,0,0.85)',
-                          textShadowOffset: { width: 0.5, height: 0.5 },
-                          textShadowRadius: 2,
-                        }}>
-                         {emp.firstCheckIn.slice(0,5)} - {emp.lastCheckOut.slice(0,5)}
+                         left: `${percent}%`,
+                         transform: [{ translateX: '-50%' }],
+                         fontSize: 10, 
+                         color: '#888',
+                         textAlign: 'center',
+                         width: 40
+                       }}>
+                         {h}:00
                        </Text>
-                    </View>
-                  </View>
-                );
-             })}
+                     );
+                   })}
+                 </View>
+               </View>
+               
+               <View style={{marginTop: 10}}>
+                 {timelineEmps.length === 0 ? <Text style={{color: '#888', marginTop: 10, fontStyle: 'italic'}}>Không có người đi muộn / về sớm.</Text> : null}
+                 {timelineEmps.map((emp, idx) => {
+                     const checkInSeconds = timeToSeconds(emp.firstCheckIn);
+                     const checkOutSeconds = timeToSeconds(emp.lastCheckOut);
+                     const timelineStartSecs = Math.max(Math.min(checkInSeconds, checkOutSeconds) - startOfDaySecs, 0);
+                     const timelineEndSecs = Math.min(Math.max(checkInSeconds, checkOutSeconds) - startOfDaySecs, totalDaySecs);
+                     const leftPercent = Math.max((timelineStartSecs / totalDaySecs) * 100, 0);
+                     let widthPercent = ((timelineEndSecs - timelineStartSecs) / totalDaySecs) * 100;
+                    
+                    if (widthPercent < 1) widthPercent = 1; 
+
+                    return (
+                      <View key={idx} style={{flexDirection: 'row', alignItems: 'center', marginVertical: 12}}>
+                        <Text style={{width: 120, fontSize: 13, fontWeight: '500'}} numberOfLines={1}>{emp.name}</Text>
+                        <View style={{flex: 1, height: 24, backgroundColor: '#f0f0f0', borderRadius: 12, position: 'relative', overflow: 'hidden'}}>
+                           <View style={{
+                             position: 'absolute',
+                             left: `${leftPercent}%`,
+                             width: `${widthPercent}%`,
+                             height: '100%',
+                             backgroundColor: emp.color,
+                             borderRadius: 12
+                           }} />
+                           <Text style={{
+                              position: 'absolute',
+                              left: `${leftPercent}%`,
+                              paddingLeft: 8,
+                              fontSize: 10,
+                              color: '#fff',
+                              fontWeight: 'bold',
+                              lineHeight: 24,
+                              textShadowColor: 'rgba(0,0,0,0.85)',
+                              textShadowOffset: { width: 0.5, height: 0.5 },
+                              textShadowRadius: 2,
+                            }}>
+                             {emp.firstCheckIn.slice(0,5)} - {emp.lastCheckOut.slice(0,5)}
+                           </Text>
+                        </View>
+                      </View>
+                    );
+                 })}
+               </View>
+             </View>
            </ScrollView>
         </View>
       </View>
@@ -415,7 +426,7 @@ const CalendarView = () => {
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
       {!isEmployee && (
         <View style={styles.attendanceControlsRow}>
-          <View style={styles.filterControl}>
+          <View style={[styles.filterControl, { zIndex: 2 }]}>
             <Text style={styles.filterLabel}>Lọc theo bộ phận:</Text>
             <SearchableDropdown
               data={departments}
@@ -433,7 +444,7 @@ const CalendarView = () => {
             />
           </View>
 
-          <View style={styles.filterControl}>
+          <View style={[styles.filterControl, { zIndex: 1 }]}>
             <Text style={styles.filterLabel}>Lọc theo nhân viên:</Text>
             <SearchableDropdown
               data={employees.filter(e => isEmployeeInDept(e.enNo))}
@@ -464,7 +475,7 @@ const CalendarView = () => {
       )}
 
       {currentView === 'month' && (
-        <View style={styles.header}>
+        <View style={[styles.header, isMobile && { flexDirection: 'column', alignItems: 'flex-start' }]}>
           <View style={styles.weekNav}>
             <TouchableOpacity onPress={() => setMonthOffset(m => m - 1)} style={{ padding: 4 }}>
               <Ionicons name="chevron-back" size={16} color="#888" />
@@ -652,13 +663,13 @@ const styles = StyleSheet.create({
   },
   monthDayName: {
     flex: 1,
-    paddingVertical: 15,
+    paddingVertical: 10,
     alignItems: 'center',
     borderRightWidth: 1,
     borderRightColor: '#eee',
   },
   dayName: {
-    fontSize: 13,
+    fontSize: 12,
     color: '#555',
     fontWeight: '600',
   },
