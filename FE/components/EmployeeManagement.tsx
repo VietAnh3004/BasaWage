@@ -35,8 +35,7 @@ const EmployeeManagement = () => {
 
   // Connection Form
   const [showAddConnection, setShowAddConnection] = useState(false);
-  const [connForm, setConnForm] = useState({ personnel_id: '', user_id: '', enno: '' });
-  const [openDropdown, setOpenDropdown] = useState(''); // 'personnel', 'user', 'enno'
+  const [connForm, setConnForm] = useState({ personnel_id: '', enno: '' });
 
   const isOwner = company.role === 'owner';
   const canManage = company.role === 'owner' || company.role === 'manager';
@@ -165,7 +164,7 @@ const EmployeeManagement = () => {
         body: JSON.stringify({ 
           company_id: company.company_id, 
           personnel_id: connForm.personnel_id, 
-          user_id: connForm.user_id || null, 
+          user_id: selectedConnectionPersonnel?.user_id || null, 
           enno: connForm.enno || null 
         })
       });
@@ -175,7 +174,7 @@ const EmployeeManagement = () => {
         return;
       }
       setShowAddConnection(false);
-      setConnForm({ personnel_id: '', user_id: '', enno: '' });
+      setConnForm({ personnel_id: '', enno: '' });
       fetchData();
     } catch (e) { console.error(e); }
   };
@@ -196,14 +195,14 @@ const EmployeeManagement = () => {
     }
   };
 
-  const handleDisconnect = async (personnel_id: string, user_id: string | null) => {
+  const handleDisconnect = async (personnel_id: string) => {
     try {
       await fetch(`${API_URL}/api/boss/personnel/disconnect`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: company.company_id, personnel_id, user_id })
+        body: JSON.stringify({ company_id: company.company_id, personnel_id })
       });
-      // Optimistic update: clear user/enno links
-      setPersonnel(prev => prev.map(p => p.id === personnel_id ? { ...p, user_id: null, user_username: null, user_email: null, user_role: null, enno: null } : p));
+      // Optimistic update: clear only the timeclock link, keep the employee account/email intact.
+      setPersonnel(prev => prev.map(p => p.id === personnel_id ? { ...p, enno: null } : p));
     } catch (e) { console.error(e); }
   };
 
@@ -215,12 +214,7 @@ const EmployeeManagement = () => {
 
   const availablePersonnel = personnel.filter(p => {
     if (String(p.id) === String(connForm.personnel_id)) return true;
-    return !p.user_id && !p.enno;
-  });
-
-  const availableMembers = members.filter(m => {
-    if (String(m.user_id) === String(selectedConnectionPersonnel?.user_id || connForm.user_id)) return true;
-    return !m.linked_enno && !personnel.some(p => String(p.user_id) === String(m.user_id));
+    return !p.enno;
   });
 
   const availableMachineEmployees = machineEmployees.filter(emp => {
@@ -355,7 +349,6 @@ const EmployeeManagement = () => {
     <View style={styles.table}>
       <View style={styles.tableHeader}>
         <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Tên nhân sự</Text>
-        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Tài khoản NV</Text>
         <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Mã máy chấm công</Text>
         <Text style={[styles.cell, {flex: 1, textAlign: 'center', fontWeight: 'bold'}]}>Lưu</Text>
       </View>
@@ -375,21 +368,7 @@ const EmployeeManagement = () => {
               showClear={false}
             />
           </View>
-          
-          {/* User Account Dropdown */}
-          <View style={{flex: 2, position: 'relative', paddingRight: 10, zIndex: 2000}}>
-            <SearchableDropdown
-              data={availableMembers}
-              value={connForm.user_id}
-              onChange={(val) => setConnForm({...connForm, user_id: val})}
-              placeholder="Chọn tài khoản..."
-              searchPlaceholder="Tìm kiếm tài khoản..."
-              keyExtractor={item => item.user_id}
-              labelExtractor={item => `${item.username} (${item.user_email || 'N/A'})`}
-              showClear={true}
-            />
-          </View>
-          
+
           {/* Timeclock Dropdown */}
           <View style={{flex: 2, position: 'relative', paddingRight: 10, zIndex: 1000}}>
             <SearchableDropdown
@@ -424,26 +403,25 @@ const EmployeeManagement = () => {
 
       {/* Existing connections */}
       {(() => {
-        const filtered = personnel.filter(p => p.user_id || p.enno).filter(p => !searchQuery || p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.user_username?.toLowerCase().includes(searchQuery.toLowerCase()) || p.enno?.toLowerCase().includes(searchQuery.toLowerCase()));
+        const filtered = personnel.filter(p => p.enno).filter(p => !searchQuery || p.name?.toLowerCase().includes(searchQuery.toLowerCase()) || p.enno?.toLowerCase().includes(searchQuery.toLowerCase()));
         const paginated = filtered.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
         return (
           <>
             {paginated.map(p => (
               <View key={p.id} style={styles.tableRow}>
                 <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>{p.name}</Text>
-                <Text style={[styles.cell, {flex: 2}]}>{p.user_username ? `${p.user_username} (${p.user_email || 'N/A'})` : '-'}</Text>
                 <Text style={[styles.cell, {flex: 2}]}>
                   {p.enno ? `${p.enno} - ${machineEmployees.find(m => m.enNo === p.enno)?.name || '?'}` : '-'}
                 </Text>
                 <View style={{flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center'}}>
                   <TouchableOpacity onPress={() => {
-                    setConnForm({ personnel_id: p.id, user_id: p.user_id || '', enno: p.enno || '' });
+                    setConnForm({ personnel_id: p.id, enno: p.enno || '' });
                     setShowAddConnection(true);
                   }} style={{marginRight: 15}}>
                     <Ionicons name="pencil" size={16} color="#4a72b5" />
                   </TouchableOpacity>
                   
-                  <TouchableOpacity onPress={() => handleDisconnect(p.id, p.user_id)}>
+                  <TouchableOpacity onPress={() => handleDisconnect(p.id)}>
                     <Ionicons name="trash" size={16} color="#f28baf" />
                   </TouchableOpacity>
                 </View>

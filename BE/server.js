@@ -1188,22 +1188,30 @@ app.post('/api/boss/personnel/connect', async (req, res) => {
 });
 
 app.post('/api/boss/personnel/disconnect', async (req, res) => {
-  const { company_id, personnel_id, user_id } = req.body;
+  const { company_id, personnel_id } = req.body;
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
-    
-    // Clear personnel record
+
+    const personnelRes = await client.query(
+      'SELECT user_id FROM Personnel WHERE id = $1 AND company_id = $2',
+      [personnel_id, company_id]
+    );
+    if (personnelRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Không tìm thấy nhân sự' });
+    }
+    const userId = personnelRes.rows[0].user_id;
+
     await client.query(
-      'UPDATE Personnel SET user_id = NULL, enno = NULL WHERE id = $1 AND company_id = $2',
+      'UPDATE Personnel SET enno = NULL WHERE id = $1 AND company_id = $2',
       [personnel_id, company_id]
     );
 
-    // Sync CompanyMembers linked_enno so attendance logic is cleared
-    if (user_id) {
+    if (userId) {
       await client.query(
         'UPDATE CompanyMembers SET linked_enno = NULL WHERE user_id = $1 AND company_id = $2',
-        [user_id, company_id]
+        [userId, company_id]
       );
     }
     
