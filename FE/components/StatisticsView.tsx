@@ -25,6 +25,8 @@ const StatisticsView = () => {
   const ITEMS_PER_PAGE = 12;
   const [currentPage, setCurrentPage] = useState(1);
 
+  const isEmployee = company.role === 'employee';
+
   const timeToSeconds = (timeStr: string) => {
     if (!timeStr) return 0;
     const [h, m, s] = timeStr.split(':').map(Number);
@@ -88,6 +90,7 @@ const StatisticsView = () => {
   };
 
   const filteredEmployees = employees.filter(e => {
+    if (isEmployee) return e.enNo === company.linked_enno;
     if (!isEmployeeInDept(e.enNo)) return false;
     if (selectedEmployee && e.enNo !== selectedEmployee) return false;
     return true;
@@ -117,6 +120,7 @@ const StatisticsView = () => {
     let totalEarly = 0;
     let totalAbsent = 0;
     let totalLeave = 0;
+    let totalWorkDays = 0;
 
     const employeeStats = filteredEmployees.map(emp => {
       let late = 0;
@@ -124,9 +128,23 @@ const StatisticsView = () => {
       let early = 0;
       let absent = 0;
       let leave = 0;
+      let workCount = 0;
+
+      const p = personnel.find(p => p.enno === emp.enNo);
+      const displayName = p ? p.name : emp.name;
+      const dept = departments.find(d => d.id === p?.department_id);
+      const departmentName = dept ? dept.name : '-';
 
       const employeeLogs = attendance.filter(a => a.enNo === emp.enNo);
-      const firstEverDate = employeeLogs.length > 0 ? employeeLogs.reduce((min, p) => p.date < min ? p.date : min, employeeLogs[0].date) : null;
+      const firstEverDate = employeeLogs.length > 0 ? employeeLogs.reduce((min, log) => log.date < min ? log.date : min, employeeLogs[0].date) : null;
+
+      employeeLogs.forEach(log => {
+        const logDate = new Date(log.date);
+        const dayOfWeek = logDate.getDay();
+        if (logDate.getFullYear() === year && logDate.getMonth() === month && dayOfWeek !== 0 && dayOfWeek !== 6) {
+          workCount++;
+        }
+      });
 
       daysToCount.forEach(dateStr => {
         const log = employeeLogs.find(a => a.date === dateStr);
@@ -156,11 +174,12 @@ const StatisticsView = () => {
       totalEarly += early;
       totalAbsent += absent;
       totalLeave += leave;
+      totalWorkDays += workCount;
 
-      return { ...emp, late, flexible, early, absent, leave };
+      return { ...emp, late, flexible, early, absent, leave, workCount, displayName, departmentName };
     });
 
-    return { employeeStats, totalLate, totalFlexible, totalEarly, totalAbsent, totalLeave };
+    return { employeeStats, totalLate, totalFlexible, totalEarly, totalAbsent, totalLeave, totalWorkDays };
   };
 
   const stats = getStats();
@@ -186,52 +205,58 @@ const StatisticsView = () => {
       </View>
 
       {/* Filters */}
-      <View style={{ marginBottom: 20, zIndex: 9999, flexDirection: 'row', gap: 15 }}>
-        <View style={{ flex: 1 }}>
-          <Text style={{ fontWeight: 'bold', marginBottom: 10 }}>Lọc theo bộ phận:</Text>
-          <SearchableDropdown
-            data={departments}
-            value={selectedDepartment}
-            onChange={(val) => {
-              setSelectedDepartment(val);
-              setSelectedEmployee(null);
-              setCurrentPage(1);
-            }}
-            placeholder="Tất cả bộ phận"
-            searchPlaceholder="Tìm kiếm bộ phận..."
-            keyExtractor={(item) => item.id}
-            labelExtractor={(item) => item.name}
-            showClear={true}
-          />
-        </View>
+      {!isEmployee && (
+        <View style={{ marginBottom: 20, zIndex: 9999, flexDirection: 'row', gap: 15 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: 'bold', marginBottom: 10 }}>Lọc theo bộ phận:</Text>
+            <SearchableDropdown
+              data={departments}
+              value={selectedDepartment}
+              onChange={(val) => {
+                setSelectedDepartment(val);
+                setSelectedEmployee(null);
+                setCurrentPage(1);
+              }}
+              placeholder="Tất cả bộ phận"
+              searchPlaceholder="Tìm kiếm bộ phận..."
+              keyExtractor={(item) => item.id}
+              labelExtractor={(item) => item.name}
+              showClear={true}
+            />
+          </View>
 
-        <View style={{ flex: 1 }}>
-          <Text style={{ fontWeight: 'bold', marginBottom: 10 }}>Lọc theo nhân viên:</Text>
-          <SearchableDropdown
-            data={employees.filter(e => isEmployeeInDept(e.enNo))}
-            value={selectedEmployee}
-            onChange={(val) => {
-              setSelectedEmployee(val);
-              setCurrentPage(1);
-            }}
-            placeholder="Tất cả nhân viên"
-            searchPlaceholder="Tìm kiếm nhân viên..."
-            keyExtractor={(item) => item.enNo}
-            labelExtractor={(item) => item.name}
-            showClear={true}
-          />
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: 'bold', marginBottom: 10 }}>Lọc theo nhân viên:</Text>
+            <SearchableDropdown
+              data={employees.filter(e => isEmployeeInDept(e.enNo))}
+              value={selectedEmployee}
+              onChange={(val) => {
+                setSelectedEmployee(val);
+                setCurrentPage(1);
+              }}
+              placeholder="Tất cả nhân viên"
+              searchPlaceholder="Tìm kiếm nhân viên..."
+              keyExtractor={(item) => item.enNo}
+              labelExtractor={(item) => item.name}
+              showClear={true}
+            />
+          </View>
         </View>
-      </View>
+      )}
 
       {/* Summary Cards */}
       <View style={styles.cardsRow}>
+        <View style={[styles.card, { borderLeftColor: '#0f766e', borderLeftWidth: 4 }]}>
+          <Text style={styles.cardTitle}>Công</Text>
+          <Text style={[styles.cardValue, {color: '#0f766e'}]}>{stats.totalWorkDays}</Text>
+        </View>
         <View style={[styles.card, { borderLeftColor: '#dc2626', borderLeftWidth: 4 }]}>
           <Text style={styles.cardTitle}>Đi muộn</Text>
           <Text style={[styles.cardValue, {color: '#dc2626'}]}>{stats.totalLate}</Text>
         </View>
-        <View style={[styles.card, { borderLeftColor: '#0f766e', borderLeftWidth: 4 }]}>
+        <View style={[styles.card, { borderLeftColor: '#f59e0b', borderLeftWidth: 4 }]}>
           <Text style={styles.cardTitle}>Linh động</Text>
-          <Text style={[styles.cardValue, {color: '#0f766e'}]}>{stats.totalFlexible}</Text>
+          <Text style={[styles.cardValue, {color: '#f59e0b'}]}>{stats.totalFlexible}</Text>
         </View>
         <View style={[styles.card, { borderLeftColor: '#7c3aed', borderLeftWidth: 4 }]}>
           <Text style={styles.cardTitle}>Về sớm</Text>
@@ -248,37 +273,43 @@ const StatisticsView = () => {
       </View>
 
       {/* Detailed Table */}
-      <View style={styles.table}>
-        <View style={styles.tableHeader}>
-          <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Nhân viên</Text>
-          <Text style={[styles.cell, {flex: 1, fontWeight: 'bold', textAlign: 'center'}]}>Đi muộn</Text>
-          <Text style={[styles.cell, {flex: 1, fontWeight: 'bold', textAlign: 'center'}]}>Linh động</Text>
-          <Text style={[styles.cell, {flex: 1, fontWeight: 'bold', textAlign: 'center'}]}>Về sớm</Text>
-          <Text style={[styles.cell, {flex: 1, fontWeight: 'bold', textAlign: 'center'}]}>Vắng</Text>
-          <Text style={[styles.cell, {flex: 1, fontWeight: 'bold', textAlign: 'center'}]}>Có phép</Text>
-        </View>
-        
-        {stats.employeeStats.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE).map(emp => (
-          <View key={emp.enNo} style={styles.tableRow}>
-            <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>{emp.name}</Text>
-            <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.late > 0 ? '#dc2626' : '#888'}]}>{emp.late}</Text>
-            <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.flexible > 0 ? '#0f766e' : '#888'}]}>{emp.flexible}</Text>
-            <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.early > 0 ? '#7c3aed' : '#888'}]}>{emp.early}</Text>
-            <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.absent > 0 ? '#4a72b5' : '#888'}]}>{emp.absent}</Text>
-            <Text style={[styles.cell, {flex: 1, textAlign: 'center', color: emp.leave > 0 ? '#4caf50' : '#888'}]}>{emp.leave}</Text>
+      {!isEmployee && (
+        <View style={styles.table}>
+          <View style={styles.tableHeader}>
+            <Text style={[styles.cell, {flex: 1.5, fontWeight: 'bold'}]}>Nhân viên</Text>
+            <Text style={[styles.cell, {flex: 1.5, fontWeight: 'bold'}]}>Bộ phận</Text>
+            <Text style={[styles.cell, {flex: 0.8, fontWeight: 'bold', textAlign: 'center'}]}>Công</Text>
+            <Text style={[styles.cell, {flex: 0.8, fontWeight: 'bold', textAlign: 'center'}]}>Đi muộn</Text>
+            <Text style={[styles.cell, {flex: 0.8, fontWeight: 'bold', textAlign: 'center'}]}>Linh động</Text>
+            <Text style={[styles.cell, {flex: 0.8, fontWeight: 'bold', textAlign: 'center'}]}>Về sớm</Text>
+            <Text style={[styles.cell, {flex: 0.8, fontWeight: 'bold', textAlign: 'center'}]}>Vắng</Text>
+            <Text style={[styles.cell, {flex: 0.8, fontWeight: 'bold', textAlign: 'center'}]}>Có phép</Text>
           </View>
-        ))}
+          
+          {stats.employeeStats.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE).map(emp => (
+            <View key={emp.enNo} style={styles.tableRow}>
+              <Text style={[styles.cell, {flex: 1.5, fontWeight: 'bold'}]}>{emp.displayName}</Text>
+              <Text style={[styles.cell, {flex: 1.5}]}>{emp.departmentName}</Text>
+              <Text style={[styles.cell, {flex: 0.8, textAlign: 'center', color: emp.workCount > 0 ? '#0f766e' : '#888'}]}>{emp.workCount}</Text>
+              <Text style={[styles.cell, {flex: 0.8, textAlign: 'center', color: emp.late > 0 ? '#dc2626' : '#888'}]}>{emp.late}</Text>
+              <Text style={[styles.cell, {flex: 0.8, textAlign: 'center', color: emp.flexible > 0 ? '#f59e0b' : '#888'}]}>{emp.flexible}</Text>
+              <Text style={[styles.cell, {flex: 0.8, textAlign: 'center', color: emp.early > 0 ? '#7c3aed' : '#888'}]}>{emp.early}</Text>
+              <Text style={[styles.cell, {flex: 0.8, textAlign: 'center', color: emp.absent > 0 ? '#4a72b5' : '#888'}]}>{emp.absent}</Text>
+              <Text style={[styles.cell, {flex: 0.8, textAlign: 'center', color: emp.leave > 0 ? '#4caf50' : '#888'}]}>{emp.leave}</Text>
+            </View>
+          ))}
 
-        {stats.employeeStats.length === 0 && (
-          <Text style={{padding: 20, textAlign: 'center', color: '#888'}}>Không có dữ liệu hiển thị.</Text>
-        )}
+          {stats.employeeStats.length === 0 && (
+            <Text style={{padding: 20, textAlign: 'center', color: '#888'}}>Không có dữ liệu hiển thị.</Text>
+          )}
 
-        <Pagination 
-          currentPage={currentPage} 
-          totalPages={Math.ceil(stats.employeeStats.length / ITEMS_PER_PAGE)} 
-          onPageChange={setCurrentPage} 
-        />
-      </View>
+          <Pagination 
+            currentPage={currentPage} 
+            totalPages={Math.ceil(stats.employeeStats.length / ITEMS_PER_PAGE)} 
+            onPageChange={setCurrentPage} 
+          />
+        </View>
+      )}
     </ScrollView>
   );
 };

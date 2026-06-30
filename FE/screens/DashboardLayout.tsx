@@ -42,6 +42,7 @@ const DashboardLayout = () => {
             <ScrollView contentContainerStyle={styles.scrollContent}>
               <Stack.Navigator
                 id="DashboardStack"
+                initialRouteName="Statistics"
                 screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#fff' } }}
               >
                 <Stack.Screen name="Calendar" component={CalendarView} />

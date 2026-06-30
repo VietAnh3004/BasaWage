@@ -232,11 +232,17 @@ const CalendarView = () => {
           let absentCount = 0;
           let earlyCount = 0;
           let leaveCount = 0;
+          let checkedInCount = 0;
             if (cell.isCurrentMonth && cell.fullDate) {
               lateCount = getLateEmployees(cell.fullDate, cell.isWeekend).length;
               absentCount = getAbsentEmployees(cell.fullDate, cell.isWeekend).length;
               earlyCount = getLeaveEarlyEmployees(cell.fullDate, cell.isWeekend).length;
               leaveCount = getOnLeaveEmployees(cell.fullDate, cell.isWeekend).length;
+              checkedInCount = cell.isWeekend ? 0 : attendance.filter(a => 
+                a.date === cell.fullDate &&
+                (!selectedEmployee || a.enNo === selectedEmployee) &&
+                isEmployeeInDept(a.enNo)
+              ).length;
             }
           
           return (
@@ -257,6 +263,7 @@ const CalendarView = () => {
               
               {cell.isCurrentMonth && (
                 <View style={styles.eventTextContainer}>
+                  {checkedInCount > 0 && <Text style={{color: '#0f766e', fontSize: 12, fontWeight: 'bold'}}>{checkedInCount} đã chấm công</Text>}
                   {lateCount > 0 && <Text style={{color: '#dc2626', fontSize: 12, fontWeight: 'bold'}}>{lateCount} muộn</Text>}
                   {earlyCount > 0 && <Text style={{color: '#7c3aed', fontSize: 12, fontWeight: 'bold'}}>{earlyCount} về sớm</Text>}
                   {absentCount > 0 && <Text style={{color: '#4a72b5', fontSize: 12, fontWeight: 'bold'}}>{absentCount} vắng mặt</Text>}
@@ -661,7 +668,7 @@ const styles = StyleSheet.create({
   },
   monthCell: {
     width: '14.28%', // 100% / 7
-    height: 120,
+    height: 145,
     borderRightWidth: 1,
     borderRightColor: '#eee',
     borderBottomWidth: 1,

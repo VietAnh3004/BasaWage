@@ -234,8 +234,8 @@ const sendMail = async ({ to, subject, text, html }) => {
 };
 
 const buildVerificationLink = (token) => {
-  const baseUrl = process.env.API_PUBLIC_URL || `http://localhost:${process.env.PORT || 3001}`;
-  return `${baseUrl.replace(/\/$/, '')}/api/verify-email?token=${encodeURIComponent(token)}`;
+  const feUrl = process.env.FE_PUBLIC_URL || 'http://localhost:8081';
+  return `${feUrl.replace(/\/$/, '')}/verify-email?token=${encodeURIComponent(token)}`;
 };
 
 const sendVerificationEmail = async (email, username, token) => {
@@ -361,7 +361,7 @@ app.post('/api/register', async (req, res) => {
 
 app.get('/api/verify-email', async (req, res) => {
   const { token } = req.query;
-  if (!token) return res.status(400).send('Thiếu token xác thực.');
+  if (!token) return res.status(400).json({ error: 'Thiếu token xác thực.' });
 
   try {
     const result = await db.query(`
@@ -375,23 +375,13 @@ app.get('/api/verify-email', async (req, res) => {
     `, [token]);
 
     if (result.rows.length === 0) {
-      return res.status(400).send(`
-        <html><body style="font-family:Arial,sans-serif;padding:32px">
-          <h2>Link xác thực không hợp lệ hoặc đã hết hạn</h2>
-          <p>Vui lòng đăng ký lại hoặc liên hệ quản trị viên.</p>
-        </body></html>
-      `);
+      return res.status(400).json({ error: 'Link xác thực không hợp lệ hoặc đã hết hạn.' });
     }
 
-    res.send(`
-      <html><body style="font-family:Arial,sans-serif;padding:32px">
-        <h2>Xác thực email thành công</h2>
-        <p>Tài khoản ${escapeHtml(result.rows[0].email)} đã có thể đăng nhập.</p>
-      </body></html>
-    `);
+    res.json({ success: true, email: result.rows[0].email, message: 'Xác thực email thành công!' });
   } catch (err) {
     console.error(err);
-    res.status(500).send('Server error');
+    res.status(500).json({ error: 'Server error' });
   }
 });
 
@@ -1914,6 +1904,11 @@ const upsertAttendancePunch = async (client, { companyId, enNo, date, time }) =>
 };
 
 const notifyManagersAboutAttendanceRequest = async (requestRow) => {
+  const submitterRole = requestRow.submitter_role || 'employee';
+  if (submitterRole === 'owner') return;
+
+  const roleCondition = submitterRole === 'manager' ? "('owner')" : "('owner', 'manager')";
+
   const [companyRes, submitterRes, recipientsRes] = await Promise.all([
     db.query('SELECT name FROM Companies WHERE id = $1', [requestRow.company_id]),
     db.query('SELECT username, email FROM Users WHERE id = $1', [requestRow.user_id]),
@@ -1923,7 +1918,7 @@ const notifyManagersAboutAttendanceRequest = async (requestRow) => {
       JOIN Users u ON u.id = cm.user_id
       WHERE cm.company_id = $1
         AND cm.status = 'active'
-        AND cm.role IN ('owner', 'manager')
+        AND cm.role IN ${roleCondition}
         AND u.email IS NOT NULL
         AND u.email <> ''
     `, [requestRow.company_id]),
@@ -1967,7 +1962,7 @@ const notifyManagersAboutAttendanceRequest = async (requestRow) => {
 };
 
 app.post('/api/attendance-requests', async (req, res) => {
-  const { user_id, company_id, date, time, reason, enno } = req.body;
+  const { user_id, company_id, date, time, reason } = req.body;
   if (!user_id || !company_id || !date || !time) return res.status(400).json({ error: 'Thiếu ngày hoặc giờ chấm công' });
 
   try {
@@ -1978,23 +1973,52 @@ app.post('/api/attendance-requests', async (req, res) => {
     if (member.rows.length === 0) return res.status(403).json({ error: 'Không có quyền tạo phiếu cho công ty này' });
 
     const role = member.rows[0].role;
-    let targetEnno = role === 'employee' ? member.rows[0].linked_enno : enno;
+    let targetEnno = member.rows[0].linked_enno;
     if (!targetEnno) {
       const personnelRes = await db.query('SELECT enno FROM Personnel WHERE user_id = $1 AND company_id = $2', [user_id, company_id]);
       targetEnno = personnelRes.rows[0]?.enno;
     }
     if (!targetEnno) return res.status(400).json({ error: 'Tài khoản chưa liên kết mã máy chấm công' });
 
+    const approval_status = role === 'owner' ? 'approved' : 'pending';
+
     const inserted = await db.query(
       `
         INSERT INTO AttendanceRequests (user_id, company_id, enNo, date, time, reason, approval_status, submitter_role)
-        VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *
       `,
-      [user_id, company_id, targetEnno, date, normalizeAttendanceTime(time), reason || null, role]
+      [user_id, company_id, targetEnno, date, normalizeAttendanceTime(time), reason || null, approval_status, role]
     );
     const submitter = await db.query('SELECT username, email FROM Users WHERE id = $1', [user_id]);
     const submitterName = submitter.rows[0]?.username || submitter.rows[0]?.email || `User #${user_id}`;
+
+    if (approval_status === 'approved') {
+      const client = await db.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const employeeRes = await client.query('SELECT name FROM Employees WHERE enNo = $1 AND company_id = $2', [targetEnno, company_id]);
+        if (employeeRes.rows.length === 0) {
+          const personnelRes = await client.query('SELECT name FROM Personnel WHERE enno = $1 AND company_id = $2', [targetEnno, company_id]);
+          await client.query(
+            'INSERT INTO Employees (enNo, company_id, name, color) VALUES ($1, $2, $3, $4) ON CONFLICT (enNo, company_id) DO NOTHING',
+            [targetEnno, company_id, personnelRes.rows[0]?.name || targetEnno, getRandomColor()]
+          );
+        }
+        await upsertAttendancePunch(client, {
+          companyId: company_id,
+          enNo: targetEnno,
+          date,
+          time,
+        });
+        await client.query('COMMIT');
+      } catch (upsertErr) {
+        await client.query('ROLLBACK');
+        console.error('Auto-approve upsert failed:', upsertErr);
+      } finally {
+        client.release();
+      }
+    }
 
     await emitCompanyEvent(company_id, {
       type: 'attendance_request_created',
@@ -2005,7 +2029,9 @@ app.post('/api/attendance-requests', async (req, res) => {
     });
 
     try {
-      await notifyManagersAboutAttendanceRequest(inserted.rows[0]);
+      if (approval_status === 'pending') {
+        await notifyManagersAboutAttendanceRequest(inserted.rows[0]);
+      }
       res.json({ success: true, request: inserted.rows[0] });
     } catch (mailErr) {
       console.error('Attendance request email failed:', mailErr);
@@ -2063,6 +2089,12 @@ app.put('/api/attendance-requests/:id/approve', async (req, res) => {
       return res.status(404).json({ error: 'Không tìm thấy phiếu chấm công' });
     }
     const request = requestRes.rows[0];
+
+    if (reviewer.rows[0].role === 'manager' && (request.submitter_role === 'manager' || request.submitter_role === 'owner')) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Không có quyền duyệt phiếu của cấp quản lý' });
+    }
+
     if (request.approval_status !== 'pending') {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Phiếu này đã được xử lý' });
@@ -2090,6 +2122,80 @@ app.put('/api/attendance-requests/:id/approve', async (req, res) => {
       });
     }
 
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+app.delete('/api/attendance-requests/:id', async (req, res) => {
+  const { id } = req.params;
+  const { company_id, reviewer_id } = req.body;
+  
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const reviewer = await client.query(
+      'SELECT role FROM CompanyMembers WHERE user_id = $1 AND company_id = $2 AND status = $3',
+      [reviewer_id, company_id, 'active']
+    );
+    if (reviewer.rows.length === 0 || !['owner', 'manager'].includes(reviewer.rows[0].role)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Không có quyền xóa phiếu chấm công' });
+    }
+
+    const requestRes = await client.query('SELECT * FROM AttendanceRequests WHERE id = $1 AND company_id = $2 FOR UPDATE', [id, company_id]);
+    if (requestRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Không tìm thấy phiếu chấm công' });
+    }
+    const request = requestRes.rows[0];
+
+    if (request.approval_status === 'approved') {
+      const normalizedTime = normalizeAttendanceTime(request.time);
+      const existing = await client.query(
+        'SELECT firstCheckIn, lastCheckOut FROM Attendance WHERE enNo = $1 AND company_id = $2 AND date = $3',
+        [request.enno, company_id, request.date]
+      );
+      
+      if (existing.rows.length > 0) {
+        const { firstcheckin, lastcheckout } = existing.rows[0];
+        let times = [];
+        if (firstcheckin) times.push(firstcheckin);
+        if (lastcheckout && lastcheckout !== firstcheckin) times.push(lastcheckout);
+        
+        const index = times.indexOf(normalizedTime);
+        if (index > -1) {
+          times.splice(index, 1);
+          if (times.length === 0) {
+            await client.query('DELETE FROM Attendance WHERE enNo = $1 AND company_id = $2 AND date = $3', [request.enno, company_id, request.date]);
+          } else {
+            const newFirst = times[0];
+            const newLast = times[times.length - 1];
+            
+            const companySettings = await client.query('SELECT work_start_time, flexible_minutes FROM Companies WHERE id = $1', [company_id]);
+            const workStartTime = companySettings.rows[0]?.work_start_time || '09:00:00';
+            const flexibleMinutes = Math.max(0, parseInt(companySettings.rows[0]?.flexible_minutes, 10) || 0);
+            const isLate = parseAttendanceTime(newFirst) > parseAttendanceTime(workStartTime) + flexibleMinutes * 60;
+            
+            await client.query(`
+              UPDATE Attendance SET 
+                firstCheckIn = $1, 
+                lastCheckOut = $2, 
+                isLate = $3
+              WHERE enNo = $4 AND company_id = $5 AND date = $6
+            `, [newFirst, newLast, isLate, request.enno, company_id, request.date]);
+          }
+        }
+      }
+    }
+
+    await client.query('DELETE FROM AttendanceRequests WHERE id = $1 AND company_id = $2', [id, company_id]);
     await client.query('COMMIT');
     res.json({ success: true });
   } catch (err) {

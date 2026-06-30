@@ -12,15 +12,18 @@ const Sidebar = () => {
 
   // Subscribe to navigation state changes so Sidebar re-renders immediately
   const activeRouteName = useNavigationState(state => {
-    if (!state) return 'Calendar';
+    if (!state) return 'Statistics';
     const currentRoute = state.routes[state.index];
     // Check if we are inside the Dashboard nested navigator
-    if (currentRoute.name === 'Dashboard' && currentRoute.state) {
-       const nestedState = currentRoute.state as any;
-       const index = nestedState.index ?? 0;
-       return nestedState.routes?.[index]?.name ?? 'Calendar';
+    if (currentRoute.name === 'Dashboard') {
+       if (currentRoute.state) {
+         const nestedState = currentRoute.state as any;
+         const index = nestedState.index ?? 0;
+         return nestedState.routes?.[index]?.name ?? 'Statistics';
+       }
+       return 'Statistics';
     }
-    return 'Calendar';
+    return 'Statistics';
   });
   
   const activeTab = activeRouteName.toLowerCase();
@@ -29,10 +32,13 @@ const Sidebar = () => {
 
   return (
     <View style={styles.sidebar}>
-      <View style={styles.logoContainer}>
+      <TouchableOpacity 
+        style={styles.logoContainer}
+        onPress={() => navigation.navigate('Dashboard', { screen: 'Statistics' })}
+      >
         <Image source={require('../assets/logo.png')} style={{width: 40, height: 40, resizeMode: 'contain'}} />
         <Text style={styles.logoName}>basawage</Text>
-      </View>
+      </TouchableOpacity>
 
       <View style={styles.menuContainer}>
         <TouchableOpacity
@@ -94,15 +100,13 @@ const Sidebar = () => {
           <Text style={[styles.menuItemText, activeTab === 'leave' && styles.menuItemTextActive]}>Nghỉ phép</Text>
         </TouchableOpacity>
 
-        {(company.role === 'owner' || company.role === 'manager') && (
-          <TouchableOpacity 
-            style={[styles.menuItem, activeTab === 'statistics' && styles.menuItemActive]}
-            onPress={() => navigation.navigate('Dashboard', { screen: 'Statistics' })}
-          >
-            <Ionicons name="bar-chart-outline" size={18} color={activeTab === 'statistics' ? "#fff" : "#888"} />
-            <Text style={[styles.menuItemText, activeTab === 'statistics' && styles.menuItemTextActive]}>Thống kê</Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity 
+          style={[styles.menuItem, activeTab === 'statistics' && styles.menuItemActive]}
+          onPress={() => navigation.navigate('Dashboard', { screen: 'Statistics' })}
+        >
+          <Ionicons name="bar-chart-outline" size={18} color={activeTab === 'statistics' ? "#fff" : "#888"} />
+          <Text style={[styles.menuItemText, activeTab === 'statistics' && styles.menuItemTextActive]}>Thống kê</Text>
+        </TouchableOpacity>
 
         {company.role === 'owner' && (
           <TouchableOpacity 
@@ -155,6 +159,7 @@ const styles = StyleSheet.create({
   logoContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: 40,
   },
   logoBox: {

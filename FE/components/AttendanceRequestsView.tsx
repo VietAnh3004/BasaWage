@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Modal, TextInput } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Calendar } from 'react-native-calendars';
 import { useAuth } from '../context/AuthContext';
 import SearchableDropdown from './SearchableDropdown';
 
@@ -12,9 +13,10 @@ const AttendanceRequestsView = () => {
   const [requestDate, setRequestDate] = useState('');
   const [requestTime, setRequestTime] = useState('');
   const [requestReason, setRequestReason] = useState('');
-  const [requestEnno, setRequestEnno] = useState<string | null>(company.role === 'employee' ? company.linked_enno : null);
   const [loading, setLoading] = useState(false);
   const [submittingRequest, setSubmittingRequest] = useState(false);
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(requestDate || new Date().toISOString().slice(0, 10));
 
   const isEmployee = company.role === 'employee';
   const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
@@ -36,11 +38,6 @@ const AttendanceRequestsView = () => {
       if (!isEmployee) {
         const resPersonnel = await fetch(`${API_URL}/api/boss/personnel?company_id=${company.company_id}`);
         const dataPersonnel = await resPersonnel.json();
-        const personnelList = dataPersonnel.personnel || [];
-        fetchedEmployees = fetchedEmployees.filter((emp: any) => {
-          const personnel = personnelList.find((p: any) => p.enno === emp.enNo);
-          return !personnel || personnel.status !== 'inactive';
-        });
       }
 
       setAttendanceRequests(dataRequests.requests || []);
@@ -63,13 +60,11 @@ const AttendanceRequestsView = () => {
     setRequestDate(`${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`);
     setRequestTime(nowTime);
     setRequestReason('');
-    setRequestEnno(company.role === 'employee' ? company.linked_enno : null);
     setShowRequestModal(true);
   };
 
   const handleSubmitAttendanceRequest = async () => {
     if (!requestDate.trim() || !requestTime.trim()) return alert('Vui lòng nhập ngày và giờ');
-    if (!isEmployee && !requestEnno) return alert('Vui lòng chọn nhân viên');
 
     setSubmittingRequest(true);
     try {
@@ -82,7 +77,6 @@ const AttendanceRequestsView = () => {
           date: requestDate.trim(),
           time: requestTime.trim(),
           reason: requestReason.trim(),
-          enno: requestEnno,
         }),
       });
       const data = await res.json();
@@ -92,7 +86,8 @@ const AttendanceRequestsView = () => {
       }
       setShowRequestModal(false);
       await fetchData();
-      alert(data.mailWarning ? `Đã tạo phiếu chấm công.\n\n${data.mailWarning}` : 'Đã tạo phiếu chấm công, chờ duyệt.');
+      const msg = company.role === 'owner' ? 'Đã lưu phiếu chấm công.' : 'Đã tạo phiếu chấm công, chờ duyệt.';
+      alert(data.mailWarning ? `${msg}\n\n${data.mailWarning}` : msg);
     } catch (err) {
       console.error(err);
       alert('Lỗi kết nối máy chủ');
@@ -124,6 +119,62 @@ const AttendanceRequestsView = () => {
     }
   };
 
+  const handleDeleteAttendanceRequest = async (id: string) => {
+    if (!window.confirm('Bạn có chắc chắn muốn xóa phiếu chấm công này không?')) return;
+    try {
+      const res = await fetch(`${API_URL}/api/attendance-requests/${id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_id: company.company_id,
+          reviewer_id: user.id,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Không thể xóa phiếu chấm công');
+        return;
+      }
+      await fetchData();
+    } catch (err) {
+      console.error(err);
+      alert('Lỗi kết nối máy chủ');
+    }
+  };
+
+  const renderCalendarHeader = ({ month, addMonth }: any) => {
+    const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const monthLabel = month?.toString?.('MMMM yyyy') || '';
+    return (
+      <View>
+        <View style={styles.calendarHeaderRow}>
+          <View style={styles.calendarHeaderSide}>
+            <TouchableOpacity style={styles.calendarHeaderBtn} onPress={() => addMonth?.(-12)}>
+              <Text style={styles.calendarHeaderIcon}>◀◀</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.calendarHeaderBtn} onPress={() => addMonth?.(-1)}>
+              <Text style={styles.calendarHeaderIcon}>◀</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.calendarHeaderTitle}>{monthLabel}</Text>
+          <View style={[styles.calendarHeaderSide, {justifyContent: 'flex-end'}]}>
+            <TouchableOpacity style={styles.calendarHeaderBtn} onPress={() => addMonth?.(1)}>
+              <Text style={styles.calendarHeaderIcon}>▶</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.calendarHeaderBtn} onPress={() => addMonth?.(12)}>
+              <Text style={styles.calendarHeaderIcon}>▶▶</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+        <View style={styles.calendarWeekRow}>
+          {weekDays.map(day => (
+            <Text key={day} style={styles.calendarWeekDay}>{day}</Text>
+          ))}
+        </View>
+      </View>
+    );
+  };
+
   const statusLabel: Record<string, string> = {
     pending: 'Chờ duyệt',
     approved: 'Đã duyệt',
@@ -133,6 +184,15 @@ const AttendanceRequestsView = () => {
     pending: '#d97706',
     approved: '#15803d',
     rejected: '#b91c1c',
+  };
+
+  const isOwner = company.role === 'owner';
+  const isManager = company.role === 'manager';
+  const canApprove = (req: any) => {
+    if (req.user_id === user.id) return false;
+    if (isOwner) return true;
+    if (isManager && req.submitter_role !== 'manager' && req.submitter_role !== 'owner') return true;
+    return false;
   };
 
   return (
@@ -174,7 +234,7 @@ const AttendanceRequestsView = () => {
                 </Text>
                 {!isEmployee && (
                   <View style={styles.actions}>
-                    {req.approval_status === 'pending' ? (
+                    {req.approval_status === 'pending' && canApprove(req) ? (
                       <>
                         <TouchableOpacity style={[styles.actionBtn, {backgroundColor: '#15803d'}]} onPress={() => handleApproveAttendanceRequest(req.id, 'approved')}>
                           <Text style={styles.actionText}>Duyệt</Text>
@@ -184,8 +244,13 @@ const AttendanceRequestsView = () => {
                         </TouchableOpacity>
                       </>
                     ) : (
-                      <Text style={styles.doneText}>Đã xử lý</Text>
+                      <Text style={styles.doneText}>
+                        {req.approval_status === 'pending' ? 'Chờ sếp duyệt' : 'Đã xử lý'}
+                      </Text>
                     )}
+                    <TouchableOpacity style={[styles.actionBtn, {backgroundColor: '#6b7280', marginLeft: (req.approval_status === 'pending' && canApprove(req)) ? 0 : 8}]} onPress={() => handleDeleteAttendanceRequest(req.id)}>
+                      <Text style={styles.actionText}>Xóa</Text>
+                    </TouchableOpacity>
                   </View>
                 )}
               </View>
@@ -198,29 +263,18 @@ const AttendanceRequestsView = () => {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Tạo phiếu chấm công</Text>
-            {!isEmployee && (
-              <>
-                <Text style={styles.modalLabel}>Nhân viên</Text>
-                <SearchableDropdown
-                  data={employees}
-                  value={requestEnno}
-                  onChange={setRequestEnno}
-                  placeholder="Chọn nhân viên"
-                  searchPlaceholder="Tìm kiếm nhân viên..."
-                  keyExtractor={(item) => item.enNo}
-                  labelExtractor={(item) => item.name}
-                  showClear={false}
-                  style={{width: '100%'}}
-                />
-              </>
-            )}
             <Text style={styles.modalLabel}>Ngày</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={requestDate}
-              onChangeText={setRequestDate}
-              placeholder="YYYY-MM-DD"
-            />
+            <TouchableOpacity
+              style={[styles.modalInput, { justifyContent: 'center' }]}
+              onPress={() => {
+                setCalendarMonth(requestDate || new Date().toISOString().slice(0, 10));
+                setShowCalendar(true);
+              }}
+            >
+              <Text style={{ color: requestDate ? '#333' : '#888' }}>
+                {requestDate || 'Chọn ngày...'}
+              </Text>
+            </TouchableOpacity>
             <Text style={styles.modalLabel}>Giờ</Text>
             <TextInput
               style={styles.modalInput}
@@ -245,6 +299,38 @@ const AttendanceRequestsView = () => {
                 {submittingRequest ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.saveText}>Gửi phiếu</Text>}
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showCalendar} transparent={true} animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { width: 340 }]}>
+            <Calendar
+              key={calendarMonth}
+              current={calendarMonth}
+              customHeader={renderCalendarHeader}
+              showSixWeeks
+              hideExtraDays={false}
+              style={styles.fixedCalendar}
+              onMonthChange={(month: any) => setCalendarMonth(month.dateString)}
+              onDayPress={(day: any) => {
+                setRequestDate(day.dateString);
+                setCalendarMonth(day.dateString);
+                setShowCalendar(false);
+              }}
+              markedDates={{
+                [requestDate]: {selected: true, selectedColor: '#4a72b5'}
+              }}
+              theme={{
+                selectedDayBackgroundColor: '#4a72b5',
+                todayTextColor: '#4a72b5',
+                arrowColor: '#4a72b5',
+              }}
+            />
+            <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowCalendar(false)}>
+              <Text style={styles.closeModalText}>Đóng</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -419,6 +505,64 @@ const styles = StyleSheet.create({
   saveText: {
     color: '#fff',
     fontWeight: 'bold',
+  },
+  fixedCalendar: {
+    height: 332,
+  },
+  calendarHeaderRow: {
+    height: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 2,
+  },
+  calendarHeaderSide: {
+    width: 70,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  calendarHeaderBtn: {
+    width: 24,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarHeaderIcon: {
+    color: '#4a72b5',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  calendarHeaderTitle: {
+    flex: 1,
+    textAlign: 'center',
+    color: '#4f6180',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  calendarWeekRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  calendarWeekDay: {
+    width: 38,
+    textAlign: 'center',
+    color: '#b8c0d0',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  closeModalBtn: {
+    marginTop: 15,
+    backgroundColor: '#f5f5f5',
+    padding: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  closeModalText: {
+    fontWeight: 'bold',
+    color: '#555',
   },
 });
 

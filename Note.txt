@@ -12,6 +12,11 @@ tài khoản cấp sẵn, không tự tạo (done)
 CHi tiết quỹ nghỉ phép (done)
 Công ty chủ động đặt rule nghỉ phép, các loại... (Chính sách nghỉ phép) (done)
 Thông báo viết tay gửi mail cho toàn bộ nhân viên (done)
-Xin đi muộn về sớm????
+Xin đi muộn về sớm????  
 Tổng thời gian muộn??????
-NV tạo phiếu chấm công để giải oan.
+NV tạo phiếu chấm công để giải oan.(done)
+----------------------------
+import thông tin NV qua exel
+Thêm hiện công cho cá nhân và cả tổng cho sếp (done)
+Link xác thực là link FE (done)
+Trang thống kê cho nhân viên (done)
