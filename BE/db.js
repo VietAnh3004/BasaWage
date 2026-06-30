@@ -147,6 +147,23 @@ const initDb = async () => {
       )
     `);
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS AttendanceRequests (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES Users(id) ON DELETE CASCADE,
+        company_id INTEGER REFERENCES Companies(id) ON DELETE CASCADE,
+        enNo TEXT NOT NULL,
+        date TEXT NOT NULL,
+        time TEXT NOT NULL,
+        reason TEXT,
+        approval_status VARCHAR(20) DEFAULT 'pending',
+        submitter_role VARCHAR(20) DEFAULT 'employee',
+        reviewed_by INTEGER REFERENCES Users(id) ON DELETE SET NULL,
+        reviewed_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
     // LeaveRequests
     await pool.query(`
       CREATE TABLE IF NOT EXISTS LeaveRequests (
@@ -214,6 +231,12 @@ const initDb = async () => {
       await pool.query(`ALTER TABLE Personnel ADD COLUMN IF NOT EXISTS start_date TEXT`);
       await pool.query(`ALTER TABLE LeaveRequests ADD COLUMN IF NOT EXISTS leave_type VARCHAR(100) DEFAULT 'Nghỉ phép'`);
       await pool.query(`ALTER TABLE LeaveRequests ADD COLUMN IF NOT EXISTS approval_status VARCHAR(20) DEFAULT 'approved'`);
+      await pool.query(`ALTER TABLE AttendanceRequests ADD COLUMN IF NOT EXISTS reason TEXT`);
+      await pool.query(`ALTER TABLE AttendanceRequests ADD COLUMN IF NOT EXISTS approval_status VARCHAR(20) DEFAULT 'pending'`);
+      await pool.query(`ALTER TABLE AttendanceRequests ADD COLUMN IF NOT EXISTS submitter_role VARCHAR(20) DEFAULT 'employee'`);
+      await pool.query(`ALTER TABLE AttendanceRequests ADD COLUMN IF NOT EXISTS reviewed_by INTEGER REFERENCES Users(id) ON DELETE SET NULL`);
+      await pool.query(`ALTER TABLE AttendanceRequests ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP`);
+      await pool.query(`ALTER TABLE AttendanceRequests ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`);
       await pool.query(`ALTER TABLE LeaveTypes ADD COLUMN IF NOT EXISTS period_type TEXT DEFAULT 'yearly'`);
       await pool.query(`ALTER TABLE LeaveTypes ADD COLUMN IF NOT EXISTS days INTEGER DEFAULT 0`);
       await pool.query(`ALTER TABLE LeaveTypes ADD COLUMN IF NOT EXISTS require_approval BOOLEAN DEFAULT TRUE`);

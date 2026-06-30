@@ -68,6 +68,14 @@ const Sidebar = () => {
           <Text style={[styles.menuItemText, activeTab === 'calendar' && styles.menuItemTextActive]}>Chấm công</Text>
         </TouchableOpacity>
 
+        <TouchableOpacity 
+          style={[styles.menuItem, activeTab === 'attendancerequests' && styles.menuItemActive]}
+          onPress={() => navigation.navigate('Dashboard', { screen: 'AttendanceRequests' })}
+        >
+          <Ionicons name="reader-outline" size={18} color={activeTab === 'attendancerequests' ? "#fff" : "#888"} />
+          <Text style={[styles.menuItemText, activeTab === 'attendancerequests' && styles.menuItemTextActive]}>Phiếu chấm công</Text>
+        </TouchableOpacity>
+
         {(company.role === 'owner' || company.role === 'manager') && (
           <TouchableOpacity 
             style={[styles.menuItem, activeTab === 'employees' && styles.menuItemActive]}

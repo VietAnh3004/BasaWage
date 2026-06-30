@@ -480,6 +480,7 @@ const CalendarView = () => {
       )}
 
       {currentView === 'month' ? renderMonthView() : renderDayView()}
+
     </ScrollView>
   );
 };

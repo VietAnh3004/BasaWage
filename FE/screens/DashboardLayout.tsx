@@ -3,6 +3,7 @@ import { View, StyleSheet, SafeAreaView, ScrollView, Text, TouchableOpacity } fr
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import Sidebar from '../components/Sidebar';
 import CalendarView from '../components/CalendarView';
+import AttendanceRequestsView from '../components/AttendanceRequestsView';
 import EmployeeManagement from '../components/EmployeeManagement';
 import LeaveManagement from '../components/LeaveManagement';
 import StatisticsView from '../components/StatisticsView';
@@ -44,6 +45,7 @@ const DashboardLayout = () => {
                 screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#fff' } }}
               >
                 <Stack.Screen name="Calendar" component={CalendarView} />
+                <Stack.Screen name="AttendanceRequests" component={AttendanceRequestsView} />
                 <Stack.Screen name="Employees" component={EmployeeManagement} />
                 <Stack.Screen name="Leave" component={LeaveManagement} />
                 <Stack.Screen name="Statistics" component={StatisticsView} />

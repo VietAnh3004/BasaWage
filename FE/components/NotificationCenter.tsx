@@ -37,6 +37,7 @@ const NotificationContext = createContext<NotificationContextValue>({
 const TYPE_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
   company_settings_changed: 'settings-outline',
   leave_request_created: 'calendar-outline',
+  attendance_request_created: 'time-outline',
   personnel_created: 'people-outline',
   member_approved: 'person-add-outline',
   member_removed: 'person-remove-outline',
@@ -46,6 +47,7 @@ const TYPE_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
 const TYPE_COLOR: Record<string, string> = {
   company_settings_changed: '#2563eb',
   leave_request_created: '#7c3aed',
+  attendance_request_created: '#2563eb',
   personnel_created: '#15803d',
   member_approved: '#0f766e',
   member_removed: '#b91c1c',
@@ -113,6 +115,14 @@ const getNotificationDetails = (item: AppNotification) => {
     return [
       ['Bộ phận', item.data?.department_name || 'Chưa có bộ phận'],
     ];
+  }
+
+  if (item.type === 'attendance_request_created') {
+    return [
+      ['Người gửi', item.data?.username || null],
+      ['Ngày', item.data?.date || null],
+      ['Giờ', item.data?.time ? String(item.data.time).slice(0, 5) : null],
+    ].filter((detail): detail is [string, string] => Boolean(detail[1]));
   }
 
   if (item.type === 'custom_announcement') {
@@ -353,6 +363,9 @@ const NotificationCenter = () => {
       setCustomTitle('');
       setCustomMessage('');
       setShowComposer(false);
+      if (data.mailWarning) {
+        alert(data.mailWarning);
+      }
     } catch (err) {
       console.error(err);
       alert('Lỗi kết nối máy chủ');

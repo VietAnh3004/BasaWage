@@ -9,9 +9,9 @@ Làm thông báo (qua mail). (done????)
 ---------------------------
 THêm thời gian du di (done)
 tài khoản cấp sẵn, không tự tạo (done)
-CHi tiết quỹ nghỉ phép
-Công ty chủ động đặt rule nghỉ phép, các loại... (Chính sách nghỉ phép)
-Thông báo viết tay gửi mail cho toàn bộ nhân viên
+CHi tiết quỹ nghỉ phép (done)
+Công ty chủ động đặt rule nghỉ phép, các loại... (Chính sách nghỉ phép) (done)
+Thông báo viết tay gửi mail cho toàn bộ nhân viên (done)
 Xin đi muộn về sớm????
 Tổng thời gian muộn??????
 NV tạo phiếu chấm công để giải oan.

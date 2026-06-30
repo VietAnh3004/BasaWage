@@ -289,6 +289,41 @@ const sendEmployeeAccountEmail = async (email, username, password, token) => {
   });
 };
 
+const sendCustomAnnouncementEmails = async ({ companyId, title, message, authorName }) => {
+  const recipientsRes = await db.query(`
+    SELECT DISTINCT LOWER(u.email) AS email, COALESCE(u.username, p.name, u.email) AS username
+    FROM Users u
+    JOIN CompanyMembers cm ON cm.user_id = u.id
+    LEFT JOIN Personnel p ON p.user_id = u.id AND p.company_id = cm.company_id
+    WHERE cm.company_id = $1
+      AND cm.status = 'active'
+      AND u.email IS NOT NULL
+      AND u.email <> ''
+  `, [companyId]);
+  const recipients = recipientsRes.rows.filter(row => row.email);
+  if (recipients.length === 0) return { sent: 0, failed: 0 };
+
+  const safeTitle = escapeHtml(title);
+  const safeMessage = escapeHtml(message).replace(/\r?\n/g, '<br/>');
+  const safeAuthor = escapeHtml(authorName || 'Người quản lý');
+
+  const results = await Promise.allSettled(recipients.map(recipient => sendMail({
+    to: recipient.email,
+    subject: `[Thông báo công ty] ${title}`,
+    text: `Thông báo công ty\n\nTiêu đề: ${title}\nNgười gửi: ${authorName || 'Người quản lý'}\n\n${message}`,
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;color:#222">
+        <h2>${safeTitle}</h2>
+        <p style="color:#555">Người gửi: <strong>${safeAuthor}</strong></p>
+        <div style="padding:12px 0">${safeMessage}</div>
+      </div>
+    `,
+  })));
+
+  const failed = results.filter(result => result.status === 'rejected').length;
+  return { sent: recipients.length - failed, failed };
+};
+
 const getBearerToken = (req) => {
   const header = req.headers.authorization || '';
   return header.startsWith('Bearer ') ? header.slice(7) : req.query.token || null;
@@ -601,7 +636,21 @@ app.post('/api/notifications/custom', async (req, res) => {
       },
     });
 
-    res.json({ success: true });
+    try {
+      const mailResult = await sendCustomAnnouncementEmails({
+        companyId: company_id,
+        title: cleanTitle,
+        message: cleanMessage,
+        authorName: member.rows[0].username || 'Người quản lý',
+      });
+      const mailWarning = mailResult.failed > 0
+        ? `Đã tạo thông báo nhưng gửi email thất bại ${mailResult.failed}/${mailResult.sent + mailResult.failed} người nhận`
+        : undefined;
+      res.json({ success: true, mailWarning });
+    } catch (mailErr) {
+      console.error('Custom announcement email failed:', mailErr);
+      res.json({ success: true, mailWarning: 'Đã tạo thông báo nhưng gửi email thông báo thất bại' });
+    }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
@@ -1825,6 +1874,232 @@ const getRandomColor = () => {
   }
   return color;
 };
+
+const normalizeAttendanceTime = (value) => {
+  const [h = '0', m = '0', s = '0'] = String(value || '').trim().split(':');
+  return `${String(parseInt(h, 10) || 0).padStart(2, '0')}:${String(parseInt(m, 10) || 0).padStart(2, '0')}:${String(parseInt(s, 10) || 0).padStart(2, '0')}`;
+};
+
+const parseAttendanceTime = (timeStr) => {
+  const [h, m, s] = normalizeAttendanceTime(timeStr).split(':').map(Number);
+  return (h || 0) * 3600 + (m || 0) * 60 + (s || 0);
+};
+
+const upsertAttendancePunch = async (client, { companyId, enNo, date, time }) => {
+  const normalizedTime = normalizeAttendanceTime(time);
+  const existing = await client.query(
+    'SELECT firstCheckIn, lastCheckOut FROM Attendance WHERE enNo = $1 AND company_id = $2 AND date = $3',
+    [enNo, companyId, date]
+  );
+  const times = [normalizedTime];
+  if (existing.rows[0]?.firstcheckin) times.push(existing.rows[0].firstcheckin);
+  if (existing.rows[0]?.lastcheckout) times.push(existing.rows[0].lastcheckout);
+  times.sort((a, b) => parseAttendanceTime(a) - parseAttendanceTime(b));
+
+  const firstCheckIn = times[0];
+  const lastCheckOut = times[times.length - 1];
+  const companySettings = await client.query('SELECT work_start_time, flexible_minutes FROM Companies WHERE id = $1', [companyId]);
+  const workStartTime = companySettings.rows[0]?.work_start_time || '09:00:00';
+  const flexibleMinutes = Math.max(0, parseInt(companySettings.rows[0]?.flexible_minutes, 10) || 0);
+  const isLate = parseAttendanceTime(firstCheckIn) > parseAttendanceTime(workStartTime) + flexibleMinutes * 60;
+
+  await client.query(`
+    INSERT INTO Attendance (enNo, company_id, date, firstCheckIn, lastCheckOut, isLate)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT(enNo, company_id, date) DO UPDATE SET
+      firstCheckIn = EXCLUDED.firstCheckIn,
+      lastCheckOut = EXCLUDED.lastCheckOut,
+      isLate = EXCLUDED.isLate
+  `, [enNo, companyId, date, firstCheckIn, lastCheckOut, isLate]);
+};
+
+const notifyManagersAboutAttendanceRequest = async (requestRow) => {
+  const [companyRes, submitterRes, recipientsRes] = await Promise.all([
+    db.query('SELECT name FROM Companies WHERE id = $1', [requestRow.company_id]),
+    db.query('SELECT username, email FROM Users WHERE id = $1', [requestRow.user_id]),
+    db.query(`
+      SELECT DISTINCT u.email, u.username
+      FROM CompanyMembers cm
+      JOIN Users u ON u.id = cm.user_id
+      WHERE cm.company_id = $1
+        AND cm.status = 'active'
+        AND cm.role IN ('owner', 'manager')
+        AND u.email IS NOT NULL
+        AND u.email <> ''
+    `, [requestRow.company_id]),
+  ]);
+  const recipients = recipientsRes.rows.filter(r => r.email);
+  if (recipients.length === 0) return;
+
+  const companyName = companyRes.rows[0]?.name || `Công ty #${requestRow.company_id}`;
+  const submitter = submitterRes.rows[0] || {};
+  const submitterName = submitter.username || submitter.email || `User #${requestRow.user_id}`;
+  const rows = [
+    ['Công ty', companyName],
+    ['Người gửi', submitterName],
+    ['Ngày', requestRow.date],
+    ['Giờ', normalizeAttendanceTime(requestRow.time).slice(0, 5)],
+    ['Lý do', requestRow.reason || '-'],
+  ];
+  const htmlRows = rows.map(([label, value]) => `
+    <tr>
+      <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:600;background:#f9fafb">${escapeHtml(label)}</td>
+      <td style="padding:8px 12px;border:1px solid #e5e7eb">${escapeHtml(value)}</td>
+    </tr>
+  `).join('');
+  const text = `Có phiếu chấm công cần duyệt.\n\n${rows.map(([label, value]) => `${label}: ${value}`).join('\n')}`;
+
+  const results = await Promise.allSettled(recipients.map(recipient => sendMail({
+    to: recipient.email,
+    subject: `Phiếu chấm công mới - ${submitterName}`,
+    text,
+    html: `
+      <div style="font-family:Arial,sans-serif;line-height:1.5;color:#222">
+        <h2>Có phiếu chấm công cần duyệt</h2>
+        <table style="border-collapse:collapse;border:1px solid #e5e7eb">${htmlRows}</table>
+      </div>
+    `,
+  })));
+  const failed = results.filter(result => result.status === 'rejected');
+  if (failed.length > 0) {
+    throw new Error(`Failed to send ${failed.length}/${recipients.length} attendance request emails`);
+  }
+};
+
+app.post('/api/attendance-requests', async (req, res) => {
+  const { user_id, company_id, date, time, reason, enno } = req.body;
+  if (!user_id || !company_id || !date || !time) return res.status(400).json({ error: 'Thiếu ngày hoặc giờ chấm công' });
+
+  try {
+    const member = await db.query(
+      'SELECT role, linked_enno FROM CompanyMembers WHERE user_id = $1 AND company_id = $2 AND status = $3',
+      [user_id, company_id, 'active']
+    );
+    if (member.rows.length === 0) return res.status(403).json({ error: 'Không có quyền tạo phiếu cho công ty này' });
+
+    const role = member.rows[0].role;
+    let targetEnno = role === 'employee' ? member.rows[0].linked_enno : enno;
+    if (!targetEnno) {
+      const personnelRes = await db.query('SELECT enno FROM Personnel WHERE user_id = $1 AND company_id = $2', [user_id, company_id]);
+      targetEnno = personnelRes.rows[0]?.enno;
+    }
+    if (!targetEnno) return res.status(400).json({ error: 'Tài khoản chưa liên kết mã máy chấm công' });
+
+    const inserted = await db.query(
+      `
+        INSERT INTO AttendanceRequests (user_id, company_id, enNo, date, time, reason, approval_status, submitter_role)
+        VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
+        RETURNING *
+      `,
+      [user_id, company_id, targetEnno, date, normalizeAttendanceTime(time), reason || null, role]
+    );
+    const submitter = await db.query('SELECT username, email FROM Users WHERE id = $1', [user_id]);
+    const submitterName = submitter.rows[0]?.username || submitter.rows[0]?.email || `User #${user_id}`;
+
+    await emitCompanyEvent(company_id, {
+      type: 'attendance_request_created',
+      title: 'Có phiếu chấm công mới',
+      message: `${submitterName} vừa tạo phiếu chấm công ngày ${date} lúc ${normalizeAttendanceTime(time).slice(0, 5)}.`,
+      actorId: user_id,
+      data: { ...inserted.rows[0], username: submitterName },
+    });
+
+    try {
+      await notifyManagersAboutAttendanceRequest(inserted.rows[0]);
+      res.json({ success: true, request: inserted.rows[0] });
+    } catch (mailErr) {
+      console.error('Attendance request email failed:', mailErr);
+      res.json({ success: true, request: inserted.rows[0], mailWarning: 'Đã tạo phiếu nhưng gửi email thông báo thất bại' });
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.get('/api/attendance-requests', async (req, res) => {
+  const { company_id, user_id, role } = req.query;
+  try {
+    let q = `
+      SELECT ar.*, u.username, e.name AS machine_name
+      FROM AttendanceRequests ar
+      JOIN Users u ON u.id = ar.user_id
+      LEFT JOIN Employees e ON e.enNo = ar.enNo AND e.company_id = ar.company_id
+      WHERE ar.company_id = $1
+    `;
+    const params = [company_id];
+    if (role === 'employee') {
+      params.push(user_id);
+      q += ` AND ar.user_id = $${params.length}`;
+    }
+    q += ' ORDER BY ar.id DESC';
+    const result = await db.query(q, params);
+    res.json({ requests: result.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.put('/api/attendance-requests/:id/approve', async (req, res) => {
+  const { id } = req.params;
+  const { company_id, reviewer_id, approval_status } = req.body;
+  if (!['approved', 'rejected'].includes(approval_status)) return res.status(400).json({ error: 'Trạng thái không hợp lệ' });
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const reviewer = await client.query(
+      'SELECT role FROM CompanyMembers WHERE user_id = $1 AND company_id = $2 AND status = $3',
+      [reviewer_id, company_id, 'active']
+    );
+    if (reviewer.rows.length === 0 || !['owner', 'manager'].includes(reviewer.rows[0].role)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Không có quyền duyệt phiếu chấm công' });
+    }
+
+    const requestRes = await client.query('SELECT * FROM AttendanceRequests WHERE id = $1 AND company_id = $2 FOR UPDATE', [id, company_id]);
+    if (requestRes.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Không tìm thấy phiếu chấm công' });
+    }
+    const request = requestRes.rows[0];
+    if (request.approval_status !== 'pending') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Phiếu này đã được xử lý' });
+    }
+
+    await client.query(
+      'UPDATE AttendanceRequests SET approval_status = $1, reviewed_by = $2, reviewed_at = NOW() WHERE id = $3',
+      [approval_status, reviewer_id, id]
+    );
+
+    if (approval_status === 'approved') {
+      const employeeRes = await client.query('SELECT name FROM Employees WHERE enNo = $1 AND company_id = $2', [request.enno, company_id]);
+      if (employeeRes.rows.length === 0) {
+        const personnelRes = await client.query('SELECT name FROM Personnel WHERE enno = $1 AND company_id = $2', [request.enno, company_id]);
+        await client.query(
+          'INSERT INTO Employees (enNo, company_id, name, color) VALUES ($1, $2, $3, $4) ON CONFLICT (enNo, company_id) DO NOTHING',
+          [request.enno, company_id, personnelRes.rows[0]?.name || request.enno, getRandomColor()]
+        );
+      }
+      await upsertAttendancePunch(client, {
+        companyId: company_id,
+        enNo: request.enno,
+        date: request.date,
+        time: request.time,
+      });
+    }
+
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
 
 const parseFile = (filePath) => {
   const content = fs.readFileSync(filePath, 'utf-8');
