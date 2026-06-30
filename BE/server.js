@@ -705,62 +705,119 @@ app.post('/api/users/selected-company', async (req, res) => {
 });
 
 // --- COMPANY SETTINGS API ---
-app.put('/api/boss/settings', async (req, res) => {
-  const {
-    company_id,
-    user_id,
-    work_start_time,
-    work_end_time,
-    flexible_minutes,
-    max_leave_days,
-    leave_request_deadline_days,
-    leave_request_deadline_hours,
-  } = req.body;
-  const flexibleMinutes = Math.max(0, parseInt(flexible_minutes, 10) || 0);
-  const deadlineDays = Math.max(0, parseInt(leave_request_deadline_days, 10) || 0);
-  const deadlineHours = Math.max(0, parseInt(leave_request_deadline_hours, 10) || 0);
+const normalizeTimeValue = (value, fallback) => String(value || fallback).slice(0, 8);
+const normalizeNumberValue = (value, fallback = 0) => Math.max(0, parseInt(value, 10) || fallback);
+const normalizeLeavePeriodType = (value) => value === 'monthly' ? 'monthly' : 'yearly';
+const normalizeBooleanValue = (value, fallback = false) => {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  return ['true', '1', 'yes', 'có', 'co'].includes(String(value).trim().toLowerCase());
+};
+
+const updateCompanySettingsSection = async (req, res, section) => {
+  const { company_id, user_id } = req.body;
   try {
-    // Verify owner role
     const memberCheck = await db.query('SELECT role FROM CompanyMembers WHERE company_id = $1 AND user_id = $2', [company_id, user_id]);
     if (memberCheck.rows.length === 0 || memberCheck.rows[0].role !== 'owner') {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
-    await db.query(
+    const currentResult = await db.query(
       `
-        UPDATE Companies
-        SET work_start_time = $1,
-            work_end_time = $2,
-            flexible_minutes = $3,
-            max_leave_days = $4,
-            leave_request_deadline_days = $5,
-            leave_request_deadline_hours = $6
-        WHERE id = $7
+        SELECT work_start_time,
+               work_end_time,
+               flexible_minutes,
+               max_leave_days,
+               leave_request_deadline_days,
+               leave_request_deadline_hours
+        FROM Companies
+        WHERE id = $1
       `,
-      [work_start_time, work_end_time, flexibleMinutes, max_leave_days, deadlineDays, deadlineHours, company_id]
+      [company_id]
     );
+    if (currentResult.rows.length === 0) return res.status(404).json({ error: 'Company not found' });
+
+    const current = currentResult.rows[0];
+    const updates = [];
+    const params = [];
+    const changedData = {};
+    const nextValues = {
+      work_start_time: normalizeTimeValue(current.work_start_time, '09:00:00'),
+      work_end_time: normalizeTimeValue(current.work_end_time, '18:00:00'),
+      flexible_minutes: normalizeNumberValue(current.flexible_minutes, 0),
+      max_leave_days: normalizeNumberValue(current.max_leave_days, 12),
+      leave_request_deadline_days: normalizeNumberValue(current.leave_request_deadline_days, 0),
+      leave_request_deadline_hours: normalizeNumberValue(current.leave_request_deadline_hours, 0),
+    };
+
+    const addUpdate = (field, value) => {
+      params.push(value);
+      updates.push(`${field} = $${params.length}`);
+      changedData[field] = value;
+      nextValues[field] = value;
+    };
+
+    if (section === 'workHours') {
+      if (Object.prototype.hasOwnProperty.call(req.body, 'work_start_time')) {
+        const value = normalizeTimeValue(req.body.work_start_time, '09:00:00');
+        if (value !== nextValues.work_start_time) addUpdate('work_start_time', value);
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'work_end_time')) {
+        const value = normalizeTimeValue(req.body.work_end_time, '18:00:00');
+        if (value !== nextValues.work_end_time) addUpdate('work_end_time', value);
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'flexible_minutes')) {
+        const value = normalizeNumberValue(req.body.flexible_minutes, 0);
+        if (value !== nextValues.flexible_minutes) addUpdate('flexible_minutes', value);
+      }
+      if (changedData.work_start_time !== undefined || changedData.work_end_time !== undefined) {
+        changedData.work_hours_label = `${String(nextValues.work_start_time).slice(0, 5)} - ${String(nextValues.work_end_time).slice(0, 5)}`;
+      }
+    }
+
+    if (section === 'leavePolicy') {
+      if (Object.prototype.hasOwnProperty.call(req.body, 'max_leave_days')) {
+        const value = normalizeNumberValue(req.body.max_leave_days, 12);
+        if (value !== nextValues.max_leave_days) addUpdate('max_leave_days', value);
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'leave_request_deadline_days')) {
+        const value = normalizeNumberValue(req.body.leave_request_deadline_days, 0);
+        if (value !== nextValues.leave_request_deadline_days) addUpdate('leave_request_deadline_days', value);
+      }
+      if (Object.prototype.hasOwnProperty.call(req.body, 'leave_request_deadline_hours')) {
+        const value = normalizeNumberValue(req.body.leave_request_deadline_hours, 0);
+        if (value !== nextValues.leave_request_deadline_hours) addUpdate('leave_request_deadline_hours', value);
+      }
+    }
+
+    if (updates.length > 0) {
+      params.push(company_id);
+      await db.query(`UPDATE Companies SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
+
+      await emitCompanyEvent(company_id, {
+        type: 'company_settings_changed',
+        title: 'Cài đặt công ty đã thay đổi',
+        message: section === 'workHours'
+          ? 'Giờ hành chính của công ty đã được cập nhật.'
+          : 'Chế độ nghỉ phép của công ty đã được cập nhật.',
+        actorId: user_id,
+        data: changedData,
+      });
+    }
+
     const state = await buildUserState(user_id);
-    await emitCompanyEvent(company_id, {
-      type: 'company_settings_changed',
-      title: 'Cài đặt công ty đã thay đổi',
-      message: 'Quy định làm việc của công ty đã được cập nhật.',
-      actorId: user_id,
-      data: {
-        work_start_time,
-        work_end_time,
-        work_hours_label: `${String(work_start_time).slice(0, 5)} - ${String(work_end_time).slice(0, 5)}`,
-        flexible_minutes: flexibleMinutes,
-        max_leave_days,
-        leave_request_deadline_days: deadlineDays,
-        leave_request_deadline_hours: deadlineHours,
-      },
-    });
-    res.json({ success: true, ...state });
+    res.json({ success: true, changed: updates.length > 0, ...state });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Server error' });
   }
-});
+};
+
+app.put('/api/boss/settings/work-hours', (req, res) => updateCompanySettingsSection(req, res, 'workHours'));
+app.put('/api/boss/settings/leave-policy', (req, res) => updateCompanySettingsSection(req, res, 'leavePolicy'));
+
+app.put('/api/boss/settings', (req, res) => updateCompanySettingsSection(req, res, 'workHours'));
 
 // --- HR MANAGEMENT API ---
 app.get('/api/boss/members', async (req, res) => {
@@ -922,15 +979,56 @@ app.post('/api/boss/departments', async (req, res) => {
   }
 });
 
+// --- CONTRACT TYPES API ---
+const ensureDefaultContractTypes = async (companyId) => {
+  const defaultTypes = ['XĐTH', 'Thử việc', 'Thực tập'];
+  await Promise.all(defaultTypes.map(name => db.query(
+    'INSERT INTO ContractTypes (company_id, name) VALUES ($1, $2) ON CONFLICT (company_id, name) DO NOTHING',
+    [companyId, name]
+  )));
+};
+
+app.get('/api/boss/contract-types', async (req, res) => {
+  const { company_id } = req.query;
+  try {
+    await ensureDefaultContractTypes(company_id);
+    const result = await db.query('SELECT * FROM ContractTypes WHERE company_id = $1 ORDER BY id ASC', [company_id]);
+    res.json({ contractTypes: result.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/boss/contract-types', async (req, res) => {
+  const { company_id, name } = req.body;
+  const cleanName = String(name || '').trim();
+  if (!company_id || !cleanName) return res.status(400).json({ error: 'Thiếu tên loại hợp đồng' });
+  try {
+    await ensureDefaultContractTypes(company_id);
+    const result = await db.query(
+      'INSERT INTO ContractTypes (company_id, name) VALUES ($1, $2) ON CONFLICT (company_id, name) DO NOTHING RETURNING *',
+      [company_id, cleanName]
+    );
+    if (!result.rows[0]) return res.status(409).json({ error: 'Loại hợp đồng này đã tồn tại' });
+    res.json({ success: true, contractType: result.rows[0] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // --- PERSONNEL API ---
 app.get('/api/boss/personnel', async (req, res) => {
   const { company_id } = req.query;
   try {
+    await ensureDefaultContractTypes(company_id);
     const result = await db.query(`
       SELECT p.*, d.name as department_name, u.email as user_email, u.username as user_username,
-             cm.role as user_role
+             cm.role as user_role, ct.name as contract_type_name
       FROM Personnel p
       LEFT JOIN Departments d ON p.department_id = d.id
+      LEFT JOIN ContractTypes ct ON p.contract_type_id = ct.id
       LEFT JOIN Users u ON p.user_id = u.id
       LEFT JOIN CompanyMembers cm ON cm.user_id = p.user_id AND cm.company_id = p.company_id
       WHERE p.company_id = $1
@@ -944,7 +1042,7 @@ app.get('/api/boss/personnel', async (req, res) => {
 });
 
 app.post('/api/boss/personnel', async (req, res) => {
-  const { company_id, name, email, department_id } = req.body;
+  const { company_id, name, email, department_id, start_date, contract_type_id } = req.body;
   if (!company_id || !name || !email) return res.status(400).json({ error: 'Missing company_id, name or email' });
   const client = await db.pool.connect();
   try {
@@ -970,16 +1068,20 @@ app.post('/api/boss/personnel', async (req, res) => {
     );
 
     const result = await client.query(
-      'INSERT INTO Personnel (company_id, name, department_id, user_id) VALUES ($1, $2, $3, $4) RETURNING *',
-      [company_id, cleanName, department_id || null, employeeUser.id]
+      'INSERT INTO Personnel (company_id, name, department_id, contract_type_id, start_date, user_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+      [company_id, cleanName, department_id || null, contract_type_id || null, start_date || null, employeeUser.id]
     );
     const department = department_id
       ? await client.query('SELECT name FROM Departments WHERE id = $1 AND company_id = $2', [department_id, company_id])
+      : { rows: [] };
+    const contractType = contract_type_id
+      ? await client.query('SELECT name FROM ContractTypes WHERE id = $1 AND company_id = $2', [contract_type_id, company_id])
       : { rows: [] };
     const departmentName = department.rows[0]?.name || 'Chưa có bộ phận';
     const personnelPayload = {
       ...result.rows[0],
       department_name: departmentName,
+      contract_type_name: contractType.rows[0]?.name || null,
       user_email: employeeUser.email,
       user_username: employeeUser.username,
       user_role: 'employee',
@@ -1011,11 +1113,11 @@ app.post('/api/boss/personnel', async (req, res) => {
 
 app.put('/api/boss/personnel/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, department_id } = req.body;
+  const { name, department_id, start_date, contract_type_id } = req.body;
   try {
     await db.query(
-      'UPDATE Personnel SET name = $1, department_id = $2 WHERE id = $3',
-      [name, department_id || null, id]
+      'UPDATE Personnel SET name = $1, department_id = $2, contract_type_id = $3, start_date = $4 WHERE id = $5',
+      [name, department_id || null, contract_type_id || null, start_date || null, id]
     );
     res.json({ success: true });
   } catch (err) {
@@ -1337,6 +1439,62 @@ const getLeaveSubmissionDeadline = (leaveDate, daysBefore = 0, hoursBefore = 0) 
   return new Date(leaveStart.getTime() - advanceMs);
 };
 
+const getPolicyAllowance = async ({ userId, companyId, leaveType, periodType, days, date }) => {
+  const maxDays = Math.max(0, parseInt(days, 10) || 0);
+  if (maxDays <= 0) return { allowance: 0, usedDays: 0, unlimited: true };
+
+  const dateObj = new Date(`${date}T00:00:00`);
+  if (Number.isNaN(dateObj.getTime())) return { allowance: maxDays, usedDays: 0, unlimited: false };
+
+  const year = dateObj.getFullYear();
+  const monthNumber = dateObj.getMonth() + 1;
+
+  if (periodType === 'monthly') {
+    const startDate = `${year}-01-01`;
+    const endDate = `${year}-${String(monthNumber).padStart(2, '0')}-31`;
+    let allowance = maxDays * monthNumber;
+
+    if (monthNumber === 1) {
+      const prevYear = year - 1;
+      const prevUsed = await db.query(`
+        SELECT COUNT(*)::int AS used_days
+        FROM LeaveRequests
+        WHERE user_id = $1
+          AND company_id = $2
+          AND leave_type = $3
+          AND approval_status = 'approved'
+          AND date LIKE $4
+      `, [userId, companyId, leaveType, `${prevYear}-%`]);
+      allowance += Math.max(0, maxDays * 12 - (prevUsed.rows[0]?.used_days || 0));
+    }
+
+    const used = await db.query(`
+      SELECT COUNT(*)::int AS used_days
+      FROM LeaveRequests
+      WHERE user_id = $1
+        AND company_id = $2
+        AND leave_type = $3
+        AND approval_status = 'approved'
+        AND date >= $4
+        AND date <= $5
+    `, [userId, companyId, leaveType, startDate, endDate]);
+
+    return { allowance, usedDays: used.rows[0]?.used_days || 0, unlimited: false };
+  }
+
+  const used = await db.query(`
+    SELECT COUNT(*)::int AS used_days
+    FROM LeaveRequests
+    WHERE user_id = $1
+      AND company_id = $2
+      AND leave_type = $3
+      AND approval_status = 'approved'
+      AND date LIKE $4
+  `, [userId, companyId, leaveType, `${year}-%`]);
+
+  return { allowance: maxDays, usedDays: used.rows[0]?.used_days || 0, unlimited: false };
+};
+
 const formatDateTime = (dateValue) => dateValue.toLocaleString('vi-VN', {
   hour: '2-digit',
   minute: '2-digit',
@@ -1357,13 +1515,22 @@ app.post('/api/leave', async (req, res) => {
       return res.status(403).json({ error: 'Không có quyền tạo đơn cho công ty này' });
     }
     const actualSubmitterRole = member.rows[0].role;
-    const approval_status = actualSubmitterRole === 'owner' || normalizedLeaveType === 'Nghỉ phép' ? 'approved' : 'pending';
 
-    const companySettings = await db.query(
-      'SELECT max_leave_days, leave_request_deadline_days, leave_request_deadline_hours FROM Companies WHERE id = $1',
-      [company_id]
-    );
+    await ensureDefaultLeaveTypes(company_id);
+    const [companySettings, leavePolicyRes] = await Promise.all([
+      db.query(
+        'SELECT max_leave_days, leave_request_deadline_days, leave_request_deadline_hours FROM Companies WHERE id = $1',
+        [company_id]
+      ),
+      db.query(
+        'SELECT name, period_type, days, require_approval FROM LeaveTypes WHERE company_id = $1 AND name = $2',
+        [company_id, normalizedLeaveType]
+      ),
+    ]);
     const settings = companySettings.rows[0] || {};
+    const leavePolicy = leavePolicyRes.rows[0] || null;
+    const requiresApproval = normalizeBooleanValue(leavePolicy?.require_approval, true);
+    const approval_status = actualSubmitterRole === 'owner' || !requiresApproval ? 'approved' : 'pending';
     const submitDeadline = getLeaveSubmissionDeadline(
       date,
       settings.leave_request_deadline_days || 0,
@@ -1378,19 +1545,19 @@ app.post('/api/leave', async (req, res) => {
       });
     }
 
-    if (normalizedLeaveType === 'Nghỉ phép') {
-      const maxLeaveDays = settings.max_leave_days || 12;
-      const used = await db.query(`
-        SELECT COUNT(*)::int AS used_days
-        FROM LeaveRequests
-        WHERE user_id = $1
-          AND company_id = $2
-          AND leave_type = $3
-          AND approval_status = 'approved'
-      `, [user_id, company_id, 'Nghỉ phép']);
+    const policyDays = Math.max(0, parseInt(leavePolicy?.days, 10) || 0);
+    if (policyDays > 0) {
+      const quota = await getPolicyAllowance({
+        userId: user_id,
+        companyId: company_id,
+        leaveType: normalizedLeaveType,
+        periodType: leavePolicy?.period_type,
+        days: policyDays,
+        date,
+      });
 
-      if ((used.rows[0]?.used_days || 0) >= maxLeaveDays) {
-        return res.status(400).json({ error: 'Đã hết quỹ nghỉ phép' });
+      if (quota.usedDays >= quota.allowance) {
+        return res.status(400).json({ error: `Đã hết quỹ ${normalizedLeaveType}` });
       }
     }
 
@@ -1475,11 +1642,41 @@ app.get('/api/leave', async (req, res) => {
 
 // --- LEAVE TYPES API ---
 const ensureDefaultLeaveTypes = async (companyId) => {
-  const defaultTypes = ['Nghỉ phép', 'Công tác'];
-  await Promise.all(defaultTypes.map(name => db.query(
-    'INSERT INTO LeaveTypes (company_id, name) VALUES ($1, $2) ON CONFLICT (company_id, name) DO NOTHING',
-    [companyId, name]
+  const companyRes = await db.query('SELECT max_leave_days FROM Companies WHERE id = $1', [companyId]);
+  const maxLeaveDays = Math.max(0, parseInt(companyRes.rows[0]?.max_leave_days, 10) || 12);
+  const defaultTypes = [
+    { name: 'Nghỉ phép', period_type: 'yearly', days: maxLeaveDays, require_approval: false },
+    { name: 'Công tác', period_type: 'yearly', days: 0, require_approval: true },
+  ];
+  await Promise.all(defaultTypes.map(item => db.query(
+    `
+      INSERT INTO LeaveTypes (company_id, name, period_type, days, require_approval)
+      VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT (company_id, name) DO UPDATE
+      SET period_type = COALESCE(LeaveTypes.period_type, EXCLUDED.period_type),
+          days = CASE
+            WHEN LeaveTypes.name = 'Nghỉ phép' AND COALESCE(LeaveTypes.days, 0) = 0 THEN EXCLUDED.days
+            ELSE COALESCE(LeaveTypes.days, EXCLUDED.days)
+          END,
+          require_approval = COALESCE(LeaveTypes.require_approval, EXCLUDED.require_approval)
+    `,
+    [companyId, item.name, item.period_type, item.days, item.require_approval]
   )));
+};
+
+const verifyCompanyOwner = async (companyId, userId) => {
+  const memberCheck = await db.query('SELECT role FROM CompanyMembers WHERE company_id = $1 AND user_id = $2', [companyId, userId]);
+  return memberCheck.rows.length > 0 && memberCheck.rows[0].role === 'owner';
+};
+
+const emitLeavePolicyNotification = async (companyId, actorId, message, data) => {
+  await emitCompanyEvent(companyId, {
+    type: 'company_settings_changed',
+    title: 'Chế độ nghỉ phép đã thay đổi',
+    message,
+    actorId,
+    data,
+  });
 };
 
 app.get('/api/leave-types', async (req, res) => {
@@ -1494,13 +1691,124 @@ app.get('/api/leave-types', async (req, res) => {
 });
 
 app.post('/api/leave-types', async (req, res) => {
-  const { company_id, name } = req.body;
+  const { company_id, user_id, name, period_type, days, require_approval } = req.body;
   try {
+    if (user_id && !(await verifyCompanyOwner(company_id, user_id))) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
     await ensureDefaultLeaveTypes(company_id);
+    const cleanName = String(name || '').trim();
+    if (!cleanName) return res.status(400).json({ error: 'Tên chính sách không được để trống' });
+    const cleanPeriodType = normalizeLeavePeriodType(period_type);
+    const cleanDays = normalizeNumberValue(days, 0);
+    const cleanRequireApproval = normalizeBooleanValue(require_approval, true);
     const result = await db.query(
-      'INSERT INTO LeaveTypes (company_id, name) VALUES ($1, $2) ON CONFLICT (company_id, name) DO NOTHING RETURNING *',
-      [company_id, name]
+      `
+        INSERT INTO LeaveTypes (company_id, name, period_type, days, require_approval)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (company_id, name) DO NOTHING
+        RETURNING *
+      `,
+      [company_id, cleanName, cleanPeriodType, cleanDays, cleanRequireApproval]
     );
+    if (!result.rows[0]) return res.status(409).json({ error: 'Chính sách này đã tồn tại' });
+    if (user_id) {
+      await emitLeavePolicyNotification(company_id, user_id, `Đã thêm chính sách nghỉ phép ${cleanName}.`, {
+        leave_policy_action: 'created',
+        leave_policy_name: cleanName,
+        leave_policy_period_type: cleanPeriodType,
+        leave_policy_days: cleanDays,
+        leave_policy_require_approval: cleanRequireApproval,
+      });
+    }
+    res.json({ success: true, leaveType: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.put('/api/leave-types/:id', async (req, res) => {
+  const { id } = req.params;
+  const { company_id, user_id, name, period_type, days, require_approval } = req.body;
+  try {
+    if (!(await verifyCompanyOwner(company_id, user_id))) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    await ensureDefaultLeaveTypes(company_id);
+
+    const currentRes = await db.query('SELECT * FROM LeaveTypes WHERE id = $1 AND company_id = $2', [id, company_id]);
+    if (currentRes.rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy chính sách nghỉ phép' });
+    const current = currentRes.rows[0];
+    const updates = [];
+    const params = [];
+    const changedData = {
+      leave_policy_action: 'updated',
+      leave_policy_name: current.name,
+    };
+
+    if (name !== undefined) {
+      const cleanName = String(name || '').trim();
+      if (!cleanName) return res.status(400).json({ error: 'Tên chính sách không được để trống' });
+      if (cleanName !== current.name) {
+        params.push(cleanName);
+        updates.push(`name = $${params.length}`);
+        changedData.leave_policy_name = cleanName;
+      }
+    }
+    if (period_type !== undefined) {
+      const cleanPeriodType = normalizeLeavePeriodType(period_type);
+      if (cleanPeriodType !== current.period_type) {
+        params.push(cleanPeriodType);
+        updates.push(`period_type = $${params.length}`);
+        changedData.leave_policy_period_type = cleanPeriodType;
+      }
+    }
+    if (days !== undefined) {
+      const cleanDays = normalizeNumberValue(days, 0);
+      if (cleanDays !== Number(current.days || 0)) {
+        params.push(cleanDays);
+        updates.push(`days = $${params.length}`);
+        changedData.leave_policy_days = cleanDays;
+      }
+    }
+    if (require_approval !== undefined) {
+      const cleanRequireApproval = normalizeBooleanValue(require_approval, true);
+      if (cleanRequireApproval !== normalizeBooleanValue(current.require_approval, true)) {
+        params.push(cleanRequireApproval);
+        updates.push(`require_approval = $${params.length}`);
+        changedData.leave_policy_require_approval = cleanRequireApproval;
+      }
+    }
+
+    if (updates.length === 0) return res.json({ success: true, changed: false, leaveType: current });
+
+    params.push(id, company_id);
+    const result = await db.query(
+      `UPDATE LeaveTypes SET ${updates.join(', ')} WHERE id = $${params.length - 1} AND company_id = $${params.length} RETURNING *`,
+      params
+    );
+    await emitLeavePolicyNotification(company_id, user_id, `Đã cập nhật chính sách nghỉ phép ${result.rows[0].name}.`, changedData);
+    res.json({ success: true, changed: true, leaveType: result.rows[0] });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'Chính sách này đã tồn tại' });
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.delete('/api/leave-types/:id', async (req, res) => {
+  const { id } = req.params;
+  const { company_id, user_id } = req.body;
+  try {
+    if (!(await verifyCompanyOwner(company_id, user_id))) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    await ensureDefaultLeaveTypes(company_id);
+    const result = await db.query('DELETE FROM LeaveTypes WHERE id = $1 AND company_id = $2 RETURNING *', [id, company_id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Không tìm thấy chính sách nghỉ phép' });
+    await emitLeavePolicyNotification(company_id, user_id, `Đã xóa chính sách nghỉ phép ${result.rows[0].name}.`, {
+      leave_policy_action: 'deleted',
+      leave_policy_name: result.rows[0].name,
+    });
     res.json({ success: true, leaveType: result.rows[0] });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });

@@ -71,17 +71,42 @@ const formatWorkHours = (data: any) => {
 
 const getNotificationDetails = (item: AppNotification) => {
   if (item.type === 'company_settings_changed') {
-    const deadlineDays = Number(item.data?.leave_request_deadline_days || 0);
-    const deadlineHours = Number(item.data?.leave_request_deadline_hours || 0);
-    const deadlineLabel = deadlineDays > 0 || deadlineHours > 0
-      ? `${deadlineDays} ngày ${deadlineHours} giờ trước ngày nghỉ`
-      : 'Không giới hạn';
-    return [
-      ['Giờ hành chính', formatWorkHours(item.data)],
-      ['Thời gian linh động', Number(item.data?.flexible_minutes || 0) > 0 ? `${item.data.flexible_minutes} phút` : 'Không áp dụng'],
-      ['Quỹ nghỉ phép', item.data?.max_leave_days ? `${item.data.max_leave_days} ngày/năm` : null],
-      ['Hạn gửi đơn nghỉ phép', deadlineLabel],
-    ].filter((detail): detail is [string, string] => Boolean(detail[1]));
+    const details: [string, string][] = [];
+    const hasField = (field: string) => Object.prototype.hasOwnProperty.call(item.data || {}, field);
+
+    if (hasField('work_hours_label') || hasField('work_start_time') || hasField('work_end_time')) {
+      const workHours = formatWorkHours(item.data);
+      if (workHours) details.push(['Giờ hành chính', workHours]);
+    }
+    if (hasField('flexible_minutes')) {
+      details.push([
+        'Thời gian linh động',
+        Number(item.data.flexible_minutes || 0) > 0 ? `${item.data.flexible_minutes} phút` : 'Không áp dụng',
+      ]);
+    }
+    if (hasField('max_leave_days')) {
+      details.push(['Quỹ nghỉ phép', `${item.data.max_leave_days} ngày/năm`]);
+    }
+    if (hasField('leave_request_deadline_days')) {
+      details.push(['Hạn gửi đơn (Ngày)', `${Number(item.data.leave_request_deadline_days || 0)} ngày`]);
+    }
+    if (hasField('leave_request_deadline_hours')) {
+      details.push(['Hạn gửi đơn (Giờ)', `${Number(item.data.leave_request_deadline_hours || 0)} giờ`]);
+    }
+    if (hasField('leave_policy_name')) {
+      details.push(['Chính sách', item.data.leave_policy_name]);
+    }
+    if (hasField('leave_policy_period_type')) {
+      details.push(['Loại', item.data.leave_policy_period_type === 'monthly' ? 'Theo tháng' : 'Theo năm']);
+    }
+    if (hasField('leave_policy_days')) {
+      details.push(['Số ngày nghỉ', `${Number(item.data.leave_policy_days || 0)} ngày`]);
+    }
+    if (hasField('leave_policy_require_approval')) {
+      details.push(['Cần duyệt', item.data.leave_policy_require_approval ? 'Có' : 'Không']);
+    }
+
+    return details;
   }
 
   if (item.type === 'personnel_created') {

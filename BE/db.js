@@ -97,6 +97,15 @@ const initDb = async () => {
       )
     `);
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS ContractTypes (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER REFERENCES Companies(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        UNIQUE(company_id, name)
+      )
+    `);
+
     // Personnel (Real life employees)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS Personnel (
@@ -104,6 +113,8 @@ const initDb = async () => {
         company_id INTEGER REFERENCES Companies(id) ON DELETE CASCADE,
         name TEXT NOT NULL,
         department_id INTEGER REFERENCES Departments(id) ON DELETE SET NULL,
+        contract_type_id INTEGER REFERENCES ContractTypes(id) ON DELETE SET NULL,
+        start_date TEXT,
         user_id INTEGER REFERENCES Users(id) ON DELETE SET NULL,
         enno TEXT,
         status VARCHAR(20) DEFAULT 'active'
@@ -155,6 +166,9 @@ const initDb = async () => {
         id SERIAL PRIMARY KEY,
         company_id INTEGER REFERENCES Companies(id) ON DELETE CASCADE,
         name TEXT NOT NULL,
+        period_type TEXT DEFAULT 'yearly' CHECK (period_type IN ('monthly', 'yearly')),
+        days INTEGER DEFAULT 0,
+        require_approval BOOLEAN DEFAULT TRUE,
         UNIQUE(company_id, name)
       )
     `);
@@ -196,13 +210,29 @@ const initDb = async () => {
       await pool.query(`ALTER TABLE Companies ADD COLUMN IF NOT EXISTS leave_request_deadline_days INTEGER DEFAULT 0`);
       await pool.query(`ALTER TABLE Companies ADD COLUMN IF NOT EXISTS leave_request_deadline_hours INTEGER DEFAULT 0`);
       await pool.query(`ALTER TABLE Personnel ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT 'active'`);
+      await pool.query(`ALTER TABLE Personnel ADD COLUMN IF NOT EXISTS contract_type_id INTEGER REFERENCES ContractTypes(id) ON DELETE SET NULL`);
+      await pool.query(`ALTER TABLE Personnel ADD COLUMN IF NOT EXISTS start_date TEXT`);
       await pool.query(`ALTER TABLE LeaveRequests ADD COLUMN IF NOT EXISTS leave_type VARCHAR(100) DEFAULT 'Nghỉ phép'`);
       await pool.query(`ALTER TABLE LeaveRequests ADD COLUMN IF NOT EXISTS approval_status VARCHAR(20) DEFAULT 'approved'`);
+      await pool.query(`ALTER TABLE LeaveTypes ADD COLUMN IF NOT EXISTS period_type TEXT DEFAULT 'yearly'`);
+      await pool.query(`ALTER TABLE LeaveTypes ADD COLUMN IF NOT EXISTS days INTEGER DEFAULT 0`);
+      await pool.query(`ALTER TABLE LeaveTypes ADD COLUMN IF NOT EXISTS require_approval BOOLEAN DEFAULT TRUE`);
       const legacyAnnualLeave = 'Ngh\u00e1\u00bb\u2030 ph\u00c3\u00a9p';
       const legacyBusinessTrip = 'C\u00c3\u00b4ng t\u00c3\u00a1c';
       await pool.query(`UPDATE LeaveRequests SET leave_type = $1 WHERE leave_type = $2`, ['Nghỉ phép', legacyAnnualLeave]);
       await pool.query(`UPDATE LeaveTypes SET name = $1 WHERE name = $2`, ['Nghỉ phép', legacyAnnualLeave]);
       await pool.query(`UPDATE LeaveTypes SET name = $1 WHERE name = $2`, ['Công tác', legacyBusinessTrip]);
+      await pool.query(`UPDATE LeaveTypes SET require_approval = FALSE WHERE name = $1`, ['Nghỉ phép']);
+      await pool.query(`UPDATE LeaveTypes SET require_approval = TRUE WHERE name <> $1 AND require_approval IS NULL`, ['Nghỉ phép']);
+      await pool.query(`
+        UPDATE LeaveTypes lt
+        SET period_type = 'yearly',
+            days = COALESCE(c.max_leave_days, 12)
+        FROM Companies c
+        WHERE lt.company_id = c.id
+          AND lt.name = 'Nghỉ phép'
+          AND COALESCE(lt.days, 0) = 0
+      `);
 
       const col = await pool.query(`
         SELECT column_name FROM information_schema.columns

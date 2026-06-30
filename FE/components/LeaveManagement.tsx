@@ -8,6 +8,14 @@ import Pagination from './Pagination';
 const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3001';
 const DEFAULT_LEAVE_TYPES = ['Nghỉ phép', 'Công tác'];
 
+type LeavePolicy = {
+  id?: number | string;
+  name: string;
+  period_type?: 'monthly' | 'yearly';
+  days?: number;
+  require_approval?: boolean;
+};
+
 const STATUS_COLOR: Record<string, string> = {
   approved: '#4caf50',
   pending: '#ffa500',
@@ -34,19 +42,25 @@ const LeaveManagement = () => {
   const [leaveType, setLeaveType] = useState('Nghỉ phép');
   const [submitting, setSubmitting] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
+  const [leaveCalendarMonth, setLeaveCalendarMonth] = useState(dateStr || new Date().toISOString().slice(0, 10));
+  const [showPolicyModal, setShowPolicyModal] = useState(false);
 
   // Leave type dropdown
   const [leaveTypes, setLeaveTypes] = useState<string[]>(DEFAULT_LEAVE_TYPES);
+  const [leavePolicies, setLeavePolicies] = useState<LeavePolicy[]>([
+    { name: 'Nghỉ phép', period_type: 'yearly', days: company.max_leave_days || 12, require_approval: false },
+    { name: 'Công tác', period_type: 'yearly', days: 0, require_approval: true },
+  ]);
   const [showTypeDropdown, setShowTypeDropdown] = useState(false);
-  const [showAddTypeInput, setShowAddTypeInput] = useState(false);
-  const [newTypeName, setNewTypeName] = useState('');
 
   const isEmployee = company.role === 'employee';
   const isManager = company.role === 'manager';
   const isOwner = company.role === 'owner';
   const canSubmitLeave = isEmployee || isManager || isOwner;
   const canApprove = isOwner || isManager; // both can approve, but managers can't approve manager-submitted leaves
-  const isAutoApprovedLeave = isOwner || leaveType === 'Nghỉ phép';
+  const selectedPolicy = leavePolicies.find(policy => policy.name === leaveType);
+  const selectedRequiresApproval = Boolean(selectedPolicy?.require_approval ?? true);
+  const isAutoApprovedLeave = isOwner || !selectedRequiresApproval;
   const getLeaveSubmissionDeadline = (leaveDate: string) => {
     const days = Number(company.leave_request_deadline_days || 0);
     const hours = Number(company.leave_request_deadline_hours || 0);
@@ -77,7 +91,9 @@ const LeaveManagement = () => {
     try {
       const res = await fetch(`${API_URL}/api/leave-types?company_id=${company.company_id}`);
       const data = await res.json();
-      const fetchedTypes = data.leaveTypes?.map((t: any) => t.name) || [];
+      const policies = data.leaveTypes || [];
+      setLeavePolicies(policies);
+      const fetchedTypes = policies.map((t: any) => t.name) || [];
       setLeaveTypes(Array.from(new Set([...DEFAULT_LEAVE_TYPES, ...fetchedTypes])));
     } catch (err) {
       console.error(err);
@@ -89,13 +105,93 @@ const LeaveManagement = () => {
     fetchLeaveTypes();
   }, []);
 
+  const renderLeaveCalendarHeader = ({ month, addMonth }: any) => {
+    const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const monthLabel = month?.toString?.('MMMM yyyy') || '';
+    return (
+      <View>
+        <View style={styles.calendarHeaderRow}>
+          <View style={styles.calendarHeaderSide}>
+            <TouchableOpacity style={styles.calendarHeaderBtn} onPress={() => addMonth?.(-12)}>
+              <Text style={styles.calendarHeaderIcon}>◀◀</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.calendarHeaderBtn} onPress={() => addMonth?.(-1)}>
+              <Text style={styles.calendarHeaderIcon}>◀</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.calendarHeaderTitle}>{monthLabel}</Text>
+          <View style={[styles.calendarHeaderSide, {justifyContent: 'flex-end'}]}>
+            <TouchableOpacity style={styles.calendarHeaderBtn} onPress={() => addMonth?.(1)}>
+              <Text style={styles.calendarHeaderIcon}>▶</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.calendarHeaderBtn} onPress={() => addMonth?.(12)}>
+              <Text style={styles.calendarHeaderIcon}>▶▶</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+        <View style={styles.calendarWeekRow}>
+          {weekDays.map(day => (
+            <Text key={day} style={styles.calendarWeekDay}>{day}</Text>
+          ))}
+        </View>
+      </View>
+    );
+  };
+
+  const getPolicyRemaining = (policy?: LeavePolicy | null) => {
+    const maxDays = Number(policy?.days || 0);
+    if (maxDays <= 0) return { remaining: null, maxDays, usedDays: 0 };
+
+    const periodType = policy?.period_type === 'monthly' ? 'monthly' : 'yearly';
+    const baseDate = dateStr ? new Date(`${dateStr}T00:00:00`) : new Date();
+    const year = baseDate.getFullYear();
+    const monthNumber = baseDate.getMonth() + 1;
+
+    if (periodType === 'monthly') {
+      const currentYearPrefix = `${year}-`;
+      const currentMonthLimit = `${year}-${String(monthNumber).padStart(2, '0')}-31`;
+      const currentYearUsedDays = leaves.filter((l: any) =>
+        l.approval_status === 'approved' &&
+        l.user_id === user.id &&
+        (l.leave_type || 'Nghỉ phép') === policy?.name &&
+        String(l.date || '').startsWith(currentYearPrefix) &&
+        String(l.date || '') <= currentMonthLimit
+      ).length;
+      const carryoverDays = monthNumber === 1
+        ? Math.max(0, maxDays * 12 - leaves.filter((l: any) =>
+            l.approval_status === 'approved' &&
+            l.user_id === user.id &&
+            (l.leave_type || 'Nghỉ phép') === policy?.name &&
+            String(l.date || '').startsWith(`${year - 1}-`)
+          ).length)
+        : 0;
+      const accruedMaxDays = maxDays * monthNumber + carryoverDays;
+      return {
+        remaining: Math.max(0, accruedMaxDays - currentYearUsedDays),
+        maxDays: accruedMaxDays,
+        usedDays: currentYearUsedDays,
+      };
+    }
+
+    const datePrefix = `${year}-`;
+    const usedDays = leaves.filter((l: any) =>
+      l.approval_status === 'approved' &&
+      l.user_id === user.id &&
+      (l.leave_type || 'Nghỉ phép') === policy?.name &&
+      String(l.date || '').startsWith(datePrefix)
+    ).length;
+
+    return { remaining: Math.max(0, maxDays - usedDays), maxDays, usedDays };
+  };
+
   const handleSubmitLeave = async () => {
     if (!dateStr || !reason) {
       alert("Vui lòng nhập Ngày và Lý do");
       return;
     }
-    if (leaveType === 'Nghỉ phép' && remainingLeaves <= 0) {
-      alert("Bạn đã hết quỹ nghỉ phép.");
+    const selectedRemaining = getPolicyRemaining(selectedPolicy);
+    if (selectedRemaining.remaining !== null && selectedRemaining.remaining <= 0) {
+      alert(`Bạn đã hết quỹ ${leaveType}.`);
       return;
     }
     const submitDeadline = getLeaveSubmissionDeadline(dateStr);
@@ -175,41 +271,22 @@ const LeaveManagement = () => {
     }
   };
 
-  const handleAddLeaveType = async () => {
-    if (!newTypeName.trim()) return;
-    try {
-      await fetch(`${API_URL}/api/leave-types`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: company.company_id, name: newTypeName.trim() }),
-      });
-      setNewTypeName('');
-      setShowAddTypeInput(false);
-      fetchLeaveTypes();
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
   if (loading) {
     return <ActivityIndicator size="large" color="#4a72b5" style={{marginTop: 50}} />;
   }
 
   const totalLeaves = leaves.length;
   const pendingLeaves = leaves.filter((l: any) => l.approval_status === 'pending').length;
-  const myApprovedLeavesCount = leaves.filter((l: any) => l.approval_status === 'approved' && l.user_id === user.id && (l.leave_type || 'Nghỉ phép') === 'Nghỉ phép').length;
-  const maxLeaveDays = company.max_leave_days || 12;
-  const remainingLeaves = Math.max(0, maxLeaveDays - myApprovedLeavesCount);
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Quản lý Vắng mặt</Text>
       
       <View style={styles.statsContainer}>
-        <View style={styles.statBox}>
-          <Text style={styles.statValue}>{remainingLeaves} / {maxLeaveDays}</Text>
-          <Text style={styles.statLabel}>Phép còn lại</Text>
-        </View>
+        <TouchableOpacity style={styles.policyButton} onPress={() => setShowPolicyModal(true)}>
+          <Ionicons name="document-text-outline" size={22} color="#4a72b5" />
+          <Text style={styles.policyButtonText}>Chính sách nghỉ phép</Text>
+        </TouchableOpacity>
         <View style={styles.statBox}>
           <Text style={styles.statValue}>{totalLeaves}</Text>
           <Text style={styles.statLabel}>Tổng đơn</Text>
@@ -232,7 +309,13 @@ const LeaveManagement = () => {
           <View style={styles.inputRow}>
             <View style={{flex: 1, marginRight: 15}}>
               <Text style={styles.label}>Ngày vắng mặt</Text>
-              <TouchableOpacity style={styles.dateSelector} onPress={() => setShowCalendar(true)}>
+              <TouchableOpacity
+                style={styles.dateSelector}
+                onPress={() => {
+                  setLeaveCalendarMonth(dateStr || new Date().toISOString().slice(0, 10));
+                  setShowCalendar(true);
+                }}
+              >
                 <Text style={{color: dateStr ? '#333' : '#888'}}>
                   {dateStr || 'Chọn ngày...'}
                 </Text>
@@ -271,28 +354,6 @@ const LeaveManagement = () => {
                     <Text style={{color: leaveType === t ? '#4a72b5' : '#333', fontWeight: leaveType === t ? 'bold' : 'normal'}}>{t}</Text>
                   </TouchableOpacity>
                 ))}
-                {!showAddTypeInput ? (
-                  <TouchableOpacity style={styles.typeDropdownAddBtn} onPress={() => setShowAddTypeInput(true)}>
-                    <Ionicons name="add-circle-outline" size={16} color="#4a72b5" />
-                    <Text style={{color: '#4a72b5', marginLeft: 6}}>Thêm loại mới</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={{flexDirection: 'row', padding: 10, alignItems: 'center', gap: 8}}>
-                    <TextInput
-                      style={{flex: 1, borderWidth: 1, borderColor: '#ddd', borderRadius: 6, padding: 8, fontSize: 13}}
-                      placeholder="Tên loại đơn..."
-                      value={newTypeName}
-                      onChangeText={setNewTypeName}
-                      autoFocus
-                    />
-                    <TouchableOpacity onPress={handleAddLeaveType} style={{backgroundColor: '#4a72b5', borderRadius: 6, padding: 8}}>
-                      <Ionicons name="checkmark" size={16} color="#fff" />
-                    </TouchableOpacity>
-                    <TouchableOpacity onPress={() => { setShowAddTypeInput(false); setNewTypeName(''); }} style={{padding: 8}}>
-                      <Ionicons name="close" size={16} color="#999" />
-                    </TouchableOpacity>
-                  </View>
-                )}
               </View>
             )}
           </View>
@@ -314,8 +375,16 @@ const LeaveManagement = () => {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Calendar
+              key={leaveCalendarMonth}
+              current={leaveCalendarMonth}
+              customHeader={renderLeaveCalendarHeader}
+              showSixWeeks
+              hideExtraDays={false}
+              style={styles.fixedCalendar}
+              onMonthChange={(month) => setLeaveCalendarMonth(month.dateString)}
               onDayPress={(day) => {
                 setDateStr(day.dateString);
+                setLeaveCalendarMonth(day.dateString);
                 setShowCalendar(false);
               }}
               markedDates={{
@@ -328,6 +397,43 @@ const LeaveManagement = () => {
               }}
             />
             <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowCalendar(false)}>
+              <Text style={styles.closeModalText}>Đóng</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showPolicyModal} transparent={true} animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.policyModalContent}>
+            <Text style={styles.policyModalTitle}>Chính sách nghỉ phép</Text>
+            <View style={styles.policyTable}>
+              <View style={styles.policyTableHeader}>
+                <Text style={[styles.policyCell, {flex: 2, fontWeight: 'bold'}]}>Tên</Text>
+                <Text style={[styles.policyCell, {flex: 1.3, fontWeight: 'bold'}]}>Loại</Text>
+                <Text style={[styles.policyCell, {flex: 1.4, fontWeight: 'bold'}]}>Số ngày còn lại</Text>
+                <Text style={[styles.policyCell, {flex: 1, textAlign: 'center', fontWeight: 'bold'}]}>Cần duyệt</Text>
+              </View>
+              {leavePolicies.map(policy => {
+                const remainingInfo = getPolicyRemaining(policy);
+                return (
+                  <View key={policy.id || policy.name} style={styles.policyTableRow}>
+                    <Text style={[styles.policyCell, {flex: 2}]}>{policy.name}</Text>
+                    <Text style={[styles.policyCell, {flex: 1.3}]}>{policy.period_type === 'monthly' ? 'Theo tháng' : 'Theo năm'}</Text>
+                    <Text style={[styles.policyCell, {flex: 1.4}]}>
+                      {remainingInfo.remaining === null ? 'Không giới hạn' : `${remainingInfo.remaining}/${remainingInfo.maxDays}`}
+                    </Text>
+                    <Text style={[styles.policyCell, {flex: 1, textAlign: 'center', fontWeight: '600', color: policy.require_approval ? '#b91c1c' : '#15803d'}]}>
+                      {policy.require_approval ? 'Có' : 'Không'}
+                    </Text>
+                  </View>
+                );
+              })}
+              {leavePolicies.length === 0 && (
+                <Text style={styles.emptyPolicyText}>Chưa có chính sách nghỉ phép nào.</Text>
+              )}
+            </View>
+            <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowPolicyModal(false)}>
               <Text style={styles.closeModalText}>Đóng</Text>
             </TouchableOpacity>
           </View>
@@ -421,6 +527,23 @@ const styles = StyleSheet.create({
     borderColor: '#eee',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  policyButton: {
+    flex: 1,
+    backgroundColor: '#fff',
+    padding: 15,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#dce7f7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  policyButtonText: {
+    color: '#4a72b5',
+    fontWeight: 'bold',
+    fontSize: 15,
   },
   statValue: {
     fontSize: 20,
@@ -567,6 +690,97 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 20,
     width: 340,
+  },
+  policyModalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    width: 560,
+    maxWidth: '92%',
+  },
+  policyModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 14,
+  },
+  policyTable: {
+    borderWidth: 1,
+    borderColor: '#eee',
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  policyTableHeader: {
+    flexDirection: 'row',
+    backgroundColor: '#f9f9f9',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  policyTableRow: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  policyCell: {
+    fontSize: 14,
+    color: '#444',
+  },
+  emptyPolicyText: {
+    padding: 18,
+    textAlign: 'center',
+    color: '#888',
+    fontStyle: 'italic',
+  },
+  fixedCalendar: {
+    height: 332,
+  },
+  calendarHeaderRow: {
+    height: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 2,
+  },
+  calendarHeaderSide: {
+    width: 70,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  calendarHeaderBtn: {
+    width: 24,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarHeaderIcon: {
+    color: '#4a72b5',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  calendarHeaderTitle: {
+    flex: 1,
+    textAlign: 'center',
+    color: '#4f6180',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  calendarWeekRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  calendarWeekDay: {
+    width: 38,
+    textAlign: 'center',
+    color: '#b8c0d0',
+    fontSize: 14,
+    fontWeight: '600',
   },
   closeModalBtn: {
     marginTop: 15,

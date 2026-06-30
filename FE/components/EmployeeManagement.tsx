@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, TextInput, Modal, Switch } from 'react-native';
+import { Calendar } from 'react-native-calendars';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import SearchableDropdown from './SearchableDropdown';
@@ -17,6 +18,7 @@ const EmployeeManagement = () => {
   const [machineEmployees, setMachineEmployees] = useState<any[]>([]);
   const [personnel, setPersonnel] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
+  const [contractTypes, setContractTypes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   const ITEMS_PER_PAGE = 12;
@@ -28,10 +30,17 @@ const EmployeeManagement = () => {
 
   // Personnel Form
   const [showPersonnelModal, setShowPersonnelModal] = useState(false);
-  const [personnelForm, setPersonnelForm] = useState({ id: null, name: '', email: '', department_id: null });
+  const [personnelForm, setPersonnelForm] = useState({ id: null, name: '', email: '', department_id: null, start_date: '', contract_type_id: null });
   const [showDeptInput, setShowDeptInput] = useState(false);
   const [newDeptName, setNewDeptName] = useState('');
   const [showDeptDropdown, setShowDeptDropdown] = useState(false);
+  const [showContractInput, setShowContractInput] = useState(false);
+  const [newContractName, setNewContractName] = useState('');
+  const [showContractDropdown, setShowContractDropdown] = useState(false);
+  const [showPersonnelDateCalendar, setShowPersonnelDateCalendar] = useState(false);
+  const [personnelCalendarMonth, setPersonnelCalendarMonth] = useState(personnelForm.start_date || new Date().toISOString().slice(0, 10));
+  const contractDropdownRef = useRef<any>(null);
+  const [contractDropdownAnchor, setContractDropdownAnchor] = useState({ x: 0, y: 0, width: 360, height: 46 });
 
   // Connection Form
   const [showAddConnection, setShowAddConnection] = useState(false);
@@ -43,22 +52,25 @@ const EmployeeManagement = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [resMembers, resMachine, resPersonnel, resDepts] = await Promise.all([
+      const [resMembers, resMachine, resPersonnel, resDepts, resContracts] = await Promise.all([
         fetch(`${API_URL}/api/boss/members?company_id=${company.company_id}`),
         fetch(`${API_URL}/api/attendance?company_id=${company.company_id}`),
         fetch(`${API_URL}/api/boss/personnel?company_id=${company.company_id}`),
-        fetch(`${API_URL}/api/boss/departments?company_id=${company.company_id}`)
+        fetch(`${API_URL}/api/boss/departments?company_id=${company.company_id}`),
+        fetch(`${API_URL}/api/boss/contract-types?company_id=${company.company_id}`)
       ]);
       
       const dataMembers = await resMembers.json();
       const dataMachine = await resMachine.json();
       const dataPersonnel = await resPersonnel.json();
       const dataDepts = await resDepts.json();
+      const dataContracts = await resContracts.json();
       
       if (dataMembers.members) setMembers(dataMembers.members);
       if (dataMachine.employees) setMachineEmployees(dataMachine.employees);
       if (dataPersonnel.personnel) setPersonnel(dataPersonnel.personnel);
       if (dataDepts.departments) setDepartments(dataDepts.departments);
+      if (dataContracts.contractTypes) setContractTypes(dataContracts.contractTypes);
       
     } catch (err) {
       console.error(err);
@@ -101,6 +113,70 @@ const EmployeeManagement = () => {
     } catch (e) { console.error(e); }
   };
 
+  const handleAddContractType = async () => {
+    if (!newContractName.trim()) return;
+    try {
+      const res = await fetch(`${API_URL}/api/boss/contract-types`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: company.company_id, name: newContractName.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Không thể thêm loại hợp đồng');
+        return;
+      }
+      setContractTypes([...contractTypes, data.contractType]);
+      setPersonnelForm({...personnelForm, contract_type_id: data.contractType.id});
+      setShowContractInput(false);
+      setNewContractName('');
+    } catch (e) { console.error(e); }
+  };
+
+  const openContractDropdown = () => {
+    if (showContractDropdown) {
+      setShowContractDropdown(false);
+      return;
+    }
+
+    contractDropdownRef.current?.measureInWindow?.((x: number, y: number, width: number, height: number) => {
+      setContractDropdownAnchor({ x, y, width, height });
+      setShowContractDropdown(true);
+    });
+  };
+
+  const renderPersonnelCalendarHeader = ({ month, addMonth }: any) => {
+    const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const monthLabel = month?.toString?.('MMMM yyyy') || '';
+    return (
+      <View>
+        <View style={styles.calendarHeaderRow}>
+          <View style={styles.calendarHeaderSide}>
+            <TouchableOpacity style={styles.calendarHeaderBtn} onPress={() => addMonth?.(-12)}>
+              <Text style={styles.calendarHeaderIcon}>◀◀</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.calendarHeaderBtn} onPress={() => addMonth?.(-1)}>
+              <Text style={styles.calendarHeaderIcon}>◀</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.calendarHeaderTitle}>{monthLabel}</Text>
+          <View style={[styles.calendarHeaderSide, {justifyContent: 'flex-end'}]}>
+            <TouchableOpacity style={styles.calendarHeaderBtn} onPress={() => addMonth?.(1)}>
+              <Text style={styles.calendarHeaderIcon}>▶</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.calendarHeaderBtn} onPress={() => addMonth?.(12)}>
+              <Text style={styles.calendarHeaderIcon}>▶▶</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+        <View style={styles.calendarWeekRow}>
+          {weekDays.map(day => (
+            <Text key={day} style={styles.calendarWeekDay}>{day}</Text>
+          ))}
+        </View>
+      </View>
+    );
+  };
+
   const handleSavePersonnel = async () => {
     if (!personnelForm.name.trim()) return;
     if (!personnelForm.id && !personnelForm.email.trim()) return alert('Vui lòng nhập email nhân viên');
@@ -117,6 +193,8 @@ const EmployeeManagement = () => {
           name: personnelForm.name,
           email: personnelForm.id ? undefined : personnelForm.email,
           department_id: personnelForm.department_id,
+          start_date: personnelForm.start_date,
+          contract_type_id: personnelForm.contract_type_id,
         })
       });
       const data = await res.json();
@@ -252,15 +330,17 @@ const EmployeeManagement = () => {
   const renderPersonnelView = () => (
     <View style={styles.table}>
       <View style={styles.tableHeader}>
-        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Họ và tên</Text>
-        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Bộ phận</Text>
-        <Text style={[styles.cell, {flex: 2, fontWeight: 'bold'}]}>Email</Text>
-        <Text style={[styles.cell, {flex: 1.2, fontWeight: 'bold'}]}>Vai trò</Text>
-        <Text style={[styles.cell, {flex: 1.4, fontWeight: 'bold'}]}>Trạng thái</Text>
-        <Text style={[styles.cell, {flex: 2, textAlign: 'center', fontWeight: 'bold'}]}>Hành động</Text>
+        <Text style={[styles.cell, {flex: 1.7, fontWeight: 'bold'}]}>Họ và tên</Text>
+        <Text style={[styles.cell, {flex: 1, fontWeight: 'bold'}]}>Bộ phận</Text>
+        <Text style={[styles.cell, {flex: 2.3, fontWeight: 'bold'}]}>Email</Text>
+        <Text style={[styles.cell, {flex: 1, fontWeight: 'bold'}]}>Ngày</Text>
+        <Text style={[styles.cell, {flex: 1.2, fontWeight: 'bold'}]}>Loại HĐ</Text>
+        <Text style={[styles.cell, {flex: 1, fontWeight: 'bold'}]}>Vai trò</Text>
+        <Text style={[styles.cell, {flex: 0.8, textAlign: 'center', fontWeight: 'bold'}]}>Trạng thái</Text>
+        <Text style={[styles.cell, {flex: 1.8, textAlign: 'center', fontWeight: 'bold'}]}>Hành động</Text>
       </View>
       {canManage && (
-        <TouchableOpacity style={styles.addBtnRow} onPress={() => { setPersonnelForm({id: null, name: '', email: '', department_id: null}); setShowPersonnelModal(true); }}>
+        <TouchableOpacity style={styles.addBtnRow} onPress={() => { setPersonnelForm({id: null, name: '', email: '', department_id: null, start_date: '', contract_type_id: null}); setShowPersonnelModal(true); }}>
           <Ionicons name="add-circle" size={20} color="#4a72b5" />
           <Text style={{color: '#4a72b5', fontWeight: 'bold', marginLeft: 5}}>Thêm nhân sự mới</Text>
         </TouchableOpacity>
@@ -273,6 +353,8 @@ const EmployeeManagement = () => {
           return !searchQuery ||
             p.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             p.department_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            p.start_date?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            p.contract_type_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             accountEmail?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             accountRole?.toLowerCase().includes(searchQuery.toLowerCase());
         });
@@ -286,10 +368,12 @@ const EmployeeManagement = () => {
               const accountRole = p.user_role || member?.role;
               return (
               <View key={p.id} style={styles.tableRow}>
-                <Text style={[styles.cell, {flex: 2}]}>{p.name}</Text>
-                <Text style={[styles.cell, {flex: 2}]}>{p.department_name || '-'}</Text>
-                <Text style={[styles.cell, {flex: 2}]}>{accountEmail || '-'}</Text>
-                <View style={{flex: 1.2}}>
+                <Text style={[styles.cell, {flex: 1.7}]}>{p.name}</Text>
+                <Text style={[styles.cell, {flex: 1}]}>{p.department_name || '-'}</Text>
+                <Text style={[styles.cell, {flex: 2.3}]}>{accountEmail || '-'}</Text>
+                <Text style={[styles.cell, {flex: 1}]}>{p.start_date || '-'}</Text>
+                <Text style={[styles.cell, {flex: 1.2}]}>{p.contract_type_name || '-'}</Text>
+                <View style={{flex: 1}}>
                   {accountRole ? (
                     <View style={[styles.badge, accountRole === 'owner' ? styles.badgeOwner : accountRole === 'manager' ? styles.badgeManager : styles.badgeEmployee]}>
                       <Text style={styles.badgeText}>{accountRole}</Text>
@@ -298,17 +382,14 @@ const EmployeeManagement = () => {
                     <Text style={[styles.cell, {color: '#888'}]}>-</Text>
                   )}
                 </View>
-                <View style={{flex: 1.4, flexDirection: 'row', alignItems: 'center'}}>
+                <View style={{flex: 0.8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center'}}>
                   <Switch
                     value={p.status === 'active' || p.status === undefined}
                     onValueChange={() => handleToggleStatus(p.id, p.status || 'active')}
-                    trackColor={{ false: '#f28baf', true: '#4caf50' }}
+                    trackColor={{ false: '#888', true: '#4caf50' }}
                     thumbColor={'#fff'}
                     disabled={!canManage}
                   />
-                  <Text style={{marginLeft: 8, fontSize: 13, color: (p.status === 'active' || p.status === undefined) ? '#4caf50' : '#f28baf'}}>
-                    {(p.status === 'active' || p.status === undefined) ? 'Hoạt động' : 'Nghỉ'}
-                  </Text>
                 </View>
                 <View style={styles.personnelActions}>
                   {canManage && (
@@ -321,7 +402,7 @@ const EmployeeManagement = () => {
                         )}
                       </View>
                       <View style={styles.iconActionSlot}>
-                        <TouchableOpacity style={styles.iconActionBtn} onPress={() => { setPersonnelForm({id: p.id, name: p.name, email: '', department_id: p.department_id}); setShowPersonnelModal(true); }}>
+                        <TouchableOpacity style={styles.iconActionBtn} onPress={() => { setPersonnelForm({id: p.id, name: p.name, email: '', department_id: p.department_id, start_date: p.start_date || '', contract_type_id: p.contract_type_id || null}); setShowPersonnelModal(true); }}>
                           <Ionicons name="pencil" size={18} color="#4a72b5" />
                         </TouchableOpacity>
                         <TouchableOpacity style={styles.iconActionBtn} onPress={() => handleDeletePersonnel(p)}>
@@ -531,6 +612,7 @@ const EmployeeManagement = () => {
       <Modal visible={showPersonnelModal} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
             <Text style={styles.modalTitle}>{personnelForm.id ? 'Sửa nhân sự' : 'Thêm nhân sự mới'}</Text>
             
             <Text style={styles.label}>Họ và tên</Text>
@@ -593,6 +675,36 @@ const EmployeeManagement = () => {
               </View>
             )}
 
+            <Text style={styles.label}>Ngày</Text>
+            <TouchableOpacity style={styles.dateSelector} onPress={() => setShowPersonnelDateCalendar(true)}>
+              <Text style={{color: personnelForm.start_date ? '#333' : '#888'}}>
+                {personnelForm.start_date || 'Chọn ngày...'}
+              </Text>
+              <Ionicons name="calendar-outline" size={18} color="#4a72b5" />
+            </TouchableOpacity>
+
+            <Text style={styles.label}>Loại hợp đồng</Text>
+            <View style={{position: 'relative', zIndex: 90}}>
+              <TouchableOpacity ref={contractDropdownRef} style={styles.modalInput} onPress={openContractDropdown}>
+                <Text>{contractTypes.find(c => String(c.id) === String(personnelForm.contract_type_id))?.name || 'Chọn loại hợp đồng...'}</Text>
+                <Ionicons name="chevron-down" size={16} style={{position: 'absolute', right: 10, top: 12}} />
+              </TouchableOpacity>
+            </View>
+
+            {showContractInput && (
+              <View style={{flexDirection: 'row', marginTop: 10, zIndex: 1}}>
+                <TextInput
+                  style={[styles.modalInput, {flex: 1, marginBottom: 0}]}
+                  value={newContractName}
+                  onChangeText={setNewContractName}
+                  placeholder="Nhập loại hợp đồng..."
+                />
+                <TouchableOpacity style={styles.addDeptBtn} onPress={handleAddContractType}>
+                  <Text style={{color: '#fff'}}>Thêm</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             <View style={styles.modalActions}>
               <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowPersonnelModal(false)}>
                 <Text style={{color: '#555'}}>Hủy</Text>
@@ -601,7 +713,68 @@ const EmployeeManagement = () => {
                 <Text style={{color: '#fff', fontWeight: 'bold'}}>Lưu</Text>
               </TouchableOpacity>
             </View>
+            </ScrollView>
           </View>
+
+          <Modal visible={showContractDropdown} transparent animationType="fade">
+            <View style={styles.contractDropdownOverlay}>
+              <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setShowContractDropdown(false)} />
+              <View
+                style={[
+                  styles.contractDropdownFloating,
+                  {
+                    top: contractDropdownAnchor.y + contractDropdownAnchor.height + 4,
+                    left: contractDropdownAnchor.x,
+                    width: contractDropdownAnchor.width,
+                  },
+                ]}
+              >
+                <ScrollView style={{maxHeight: 260}} keyboardShouldPersistTaps="handled">
+                  {contractTypes.map(c => (
+                    <TouchableOpacity key={c.id} style={styles.deptDropdownItem} onPress={() => { setPersonnelForm({...personnelForm, contract_type_id: c.id}); setShowContractDropdown(false); }}>
+                      <Text>{c.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                  <TouchableOpacity style={styles.deptDropdownAddBtn} onPress={() => { setShowContractInput(true); setShowContractDropdown(false); }}>
+                    <Ionicons name="add" size={16} color="#4a72b5" />
+                    <Text style={{color: '#4a72b5', fontWeight: 'bold'}}>Thêm loại HĐ</Text>
+                  </TouchableOpacity>
+                </ScrollView>
+              </View>
+            </View>
+          </Modal>
+
+          <Modal visible={showPersonnelDateCalendar} transparent animationType="fade">
+            <View style={styles.calendarModalOverlay}>
+              <View style={styles.calendarModalContent}>
+                <Calendar
+                  key={personnelCalendarMonth}
+                  current={personnelCalendarMonth}
+                  customHeader={renderPersonnelCalendarHeader}
+                  showSixWeeks
+                  hideExtraDays={false}
+                  style={styles.fixedCalendar}
+                  onMonthChange={(month) => setPersonnelCalendarMonth(month.dateString)}
+                  onDayPress={(day) => {
+                    setPersonnelForm({...personnelForm, start_date: day.dateString});
+                    setPersonnelCalendarMonth(day.dateString);
+                    setShowPersonnelDateCalendar(false);
+                  }}
+                  markedDates={{
+                    [personnelForm.start_date]: {selected: true, selectedColor: '#f28baf'}
+                  }}
+                  theme={{
+                    selectedDayBackgroundColor: '#f28baf',
+                    todayTextColor: '#4a72b5',
+                    arrowColor: '#4a72b5',
+                  }}
+                />
+                <TouchableOpacity style={styles.closeCalendarBtn} onPress={() => setShowPersonnelDateCalendar(false)}>
+                  <Text style={styles.closeCalendarText}>Đóng</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Modal>
         </View>
       </Modal>
 
@@ -731,7 +904,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   personnelActions: {
-    flex: 2,
+    flex: 1.8,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -816,6 +989,7 @@ const styles = StyleSheet.create({
   modalContent: {
     backgroundColor: '#fff',
     width: 400,
+    maxHeight: '90%',
     borderRadius: 12,
     padding: 24,
     elevation: 10,
@@ -840,6 +1014,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     backgroundColor: '#f9f9f9',
   },
+  dateSelector: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    height: 44,
+    backgroundColor: '#f9f9f9',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   deptDropdown: {
     position: 'absolute',
     top: 50,
@@ -851,6 +1036,94 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     elevation: 5,
     zIndex: 1000,
+  },
+  contractDropdownOverlay: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  contractDropdownFloating: {
+    position: 'absolute',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 6,
+    maxHeight: 280,
+    elevation: 12,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: {width: 0, height: 4},
+    overflow: 'hidden',
+  },
+  calendarModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  calendarModalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    width: 340,
+  },
+  fixedCalendar: {
+    height: 332,
+  },
+  calendarHeaderRow: {
+    height: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 2,
+  },
+  calendarHeaderSide: {
+    width: 70,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  calendarHeaderBtn: {
+    width: 24,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarHeaderIcon: {
+    color: '#4a72b5',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  calendarHeaderTitle: {
+    flex: 1,
+    textAlign: 'center',
+    color: '#4f6180',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  calendarWeekRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  calendarWeekDay: {
+    width: 38,
+    textAlign: 'center',
+    color: '#b8c0d0',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  closeCalendarBtn: {
+    marginTop: 15,
+    backgroundColor: '#f5f5f5',
+    padding: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  closeCalendarText: {
+    fontWeight: 'bold',
+    color: '#555',
   },
   deptDropdownItem: {
     padding: 12,
